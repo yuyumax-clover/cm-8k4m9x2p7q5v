@@ -1,0 +1,2630 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CiteMap — 論文引用関係・引用文言エクスプローラー</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans JP', system-ui, -apple-system, sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    .canvas-scroll::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    .canvas-scroll::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .canvas-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .canvas-scroll::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .paper-card {
+      transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+      user-select: none;
+    }
+    .paper-card:hover {
+      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 4px 10px -2px rgba(15, 23, 42, 0.06);
+      z-index: 30 !important;
+    }
+    .edge-path {
+      transition: stroke-width 0.15s ease, opacity 0.15s ease;
+      cursor: pointer;
+    }
+    .edge-path:hover {
+      stroke-width: 3.5px !important;
+      opacity: 1 !important;
+    }
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 z-40">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-amber-400 border-2 border-amber-500 flex items-center justify-center shadow-sm">
+        <svg class="w-5 h-5 text-slate-900" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-base font-bold text-slate-900 leading-tight">CiteMap</h1>
+        <p class="text-xs text-slate-500">出版年 × 分野テーマで論文の引用関係と本文中の引用文言を可視化</p>
+      </div>
+    </div>
+
+    <!-- Search & Intent Filter -->
+    <div class="flex flex-wrap items-center gap-2 flex-1 max-w-2xl justify-end">
+      <div class="relative flex-1 min-w-[200px] max-w-xs">
+        <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
+        </svg>
+        <input id="searchInput" type="text" placeholder="タイトル・著者・引用文言を検索..." class="w-full pl-9 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white" />
+      </div>
+
+      <select id="intentFilter" class="text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400">
+        <option value="all">すべての引用タイプ</option>
+        <option value="background">基礎・先行研究</option>
+        <option value="method">手法・プロトコル採用</option>
+        <option value="comparison">比較・ベンチマーク</option>
+        <option value="extension">課題指摘・拡張</option>
+      </select>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex flex-wrap items-center gap-1.5">
+      <button id="btnAddPaper" type="button" class="px-3 py-1.5 text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg shadow-sm transition flex items-center gap-1">
+        <span>+</span> 論文を追加
+      </button>
+      <button id="btnAddLink" type="button" class="px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm transition flex items-center gap-1">
+        <span>+</span> 引用線を追加
+      </button>
+      <button id="btnManageThemes" type="button" class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition">
+        テーマ設定
+      </button>
+      <button id="btnAutoClassify" type="button" class="px-2.5 py-1.5 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg transition" title="論文内容やOpenAlexトピックから横軸の分類案を自動提案・振り分け">
+        横軸を自動提案
+      </button>
+      <button id="btnPaperpileImport" type="button" class="px-2.5 py-1.5 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg transition" title="PaperpileのBibTeXまたはJSONを一括インポート">
+        Paperpile取込
+      </button>
+      <button id="btnRefreshOpenAlex" type="button" class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition" title="OpenAlex APIから最新の被引用数を取得">
+        引用数更新
+      </button>
+      <button id="btnAutoLinkOpenAlex" type="button" class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition" title="OpenAlexの参考文献データからマップ内の論文同士を自動で線で結ぶ">
+        引用線自動結線
+      </button>
+      <button id="btnCloudSync" type="button" class="px-2.5 py-1.5 text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition inline-flex items-center gap-1.5" title="Googleスプレッドシートと自動同期">
+        <span id="cloudSyncDot" class="w-2 h-2 rounded-full bg-slate-300"></span>
+        スプレッドシート同期
+      </button>
+      <button id="btnDataIO" type="button" class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition">
+        JSON入出力
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <div class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+
+    <!-- Left/Center: 2D Citation Timeline Canvas -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-slate-100 relative">
+
+      <!-- Legend & Quick Controls Bar -->
+      <div class="bg-white/90 backdrop-blur border-b border-slate-200 px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0 z-30">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <div class="flex flex-wrap items-center gap-2.5">
+            <span class="font-semibold text-slate-500">引用の文脈:</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-1 rounded-full bg-blue-500"></span>基礎・先行研究</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-1 rounded-full bg-emerald-500"></span>手法・プロトコル</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-1 rounded-full bg-amber-500"></span>比較・ベンチマーク</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-1 rounded-full bg-rose-500"></span>課題・拡張</span>
+          </div>
+          <span class="text-slate-300 hidden sm:inline">|</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-semibold text-slate-500">枠色(引用数):</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded border-2 border-slate-400 bg-white"></span>&lt;100</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded border-2 border-sky-500 bg-white"></span>100–999</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded border-2 border-emerald-500 bg-white"></span>1,000–1,999</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded border-2 border-amber-500 bg-white"></span>2,000–2,999</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded border-2 border-rose-500 bg-white"></span>3,000+</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="inline-flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200" role="group" aria-label="文献内文章の表示言語">
+            <span class="text-[11px] font-semibold text-slate-500 px-1.5">文献文:</span>
+            <button type="button" data-doc-lang="en" class="doc-lang-btn px-2 py-0.5 text-[11px] font-semibold rounded-md transition">EN</button>
+            <button type="button" data-doc-lang="ja" class="doc-lang-btn px-2 py-0.5 text-[11px] font-semibold rounded-md transition">JA</button>
+            <button type="button" data-doc-lang="both" class="doc-lang-btn px-2 py-0.5 text-[11px] font-semibold rounded-md transition">日英</button>
+          </div>
+          <span class="text-slate-300">|</span>
+          <label class="inline-flex items-center gap-1.5 cursor-pointer text-slate-600 select-none">
+            <input id="toggleQuotePills" type="checkbox" checked class="rounded border-slate-300 text-amber-500 focus:ring-amber-400" />
+            <span>線上に引用メモアイコン表示</span>
+          </label>
+          <span class="text-slate-300">|</span>
+          <div class="flex items-center gap-1">
+            <button id="btnZoomOut" type="button" class="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold flex items-center justify-center">−</button>
+            <span id="zoomLabel" class="w-11 text-center font-mono text-slate-600">100%</span>
+            <button id="btnZoomIn" type="button" class="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold flex items-center justify-center">+</button>
+            <button id="btnZoomReset" type="button" class="px-2 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium">100%</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scrollable Map Viewport -->
+      <div id="mapViewport" class="flex-1 overflow-auto canvas-scroll relative p-4">
+        <div id="mapZoomContainer" class="origin-top-left transition-transform duration-150">
+          <!-- Rendered dynamically by JS -->
+        </div>
+      </div>
+
+      <!-- Bottom Hint -->
+      <div class="bg-white/90 border-t border-slate-200 px-4 py-1 text-[11px] text-slate-500 flex items-center justify-between shrink-0">
+        <span>ヒント: カードをクリックで詳細表示 ／ カードを左右にドラッグしてレーン内・レーン間の位置を調整 ／ 線または💬をクリックで本文中の引用文言を表示</span>
+        <span id="statsSummary" class="font-medium text-slate-600"></span>
+      </div>
+    </main>
+
+    <!-- Right: Inspector Panel -->
+    <aside id="inspectorPanel" class="w-full lg:w-[400px] xl:w-[430px] bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col overflow-hidden shrink-0 max-h-[45vh] lg:max-h-none z-30">
+      <div id="inspectorContent" class="flex-1 overflow-y-auto p-4 space-y-4">
+        <!-- Rendered dynamically by JS -->
+      </div>
+    </aside>
+  </div>
+
+  <!-- Modal Backdrop -->
+  <div id="modalBackdrop" class="fixed inset-0 bg-slate-900/50 backdrop-blur-xs hidden items-center justify-center p-4 z-50">
+    <div id="modalBox" class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+        <h2 id="modalTitle" class="text-base font-bold text-slate-900">モーダル</h2>
+        <button id="btnCloseModal" type="button" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center text-lg">&times;</button>
+      </div>
+      <div id="modalBody" class="p-5 overflow-y-auto space-y-4 text-sm"></div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg opacity-0 pointer-events-none transition-opacity duration-200 z-50"></div>
+
+  <script>
+    // =========================================================================
+    // Constants & Helpers
+    // =========================================================================
+    const STORAGE_KEY = 'citemap_explorer_v1';
+
+    const INTENT_META = {
+      background: { label: '基礎・先行研究', color: '#3b82f6', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+      method:     { label: '手法・プロトコル採用', color: '#10b981', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+      comparison: { label: '比較・ベンチマーク', color: '#f59e0b', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
+      extension:  { label: '課題指摘・拡張', color: '#f43f5e', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' }
+    };
+
+    const LANE_WIDTH = 280;
+    const AXIS_WIDTH = 76;
+    const HEADER_HEIGHT = 56;
+    const ROW_HEIGHT = 128;
+    const CARD_WIDTH = 236;
+    const CARD_HEIGHT = 92;
+
+    function uid(prefix = 'id') {
+      return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function showToast(msg, duration = 2600) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('opacity-0');
+      el.classList.add('opacity-100');
+      clearTimeout(el._timer);
+      el._timer = setTimeout(() => {
+        el.classList.remove('opacity-100');
+        el.classList.add('opacity-0');
+      }, duration);
+    }
+
+    // =========================================================================
+    // Initial Grounded Sample Dataset (NV-Center Quantum Sensing)
+    // =========================================================================
+    function getDefaultData() {
+      return {
+        themes: [
+          { id: 'theme_bg', name: '基礎・先行研究', color: '#6366f1' },
+          { id: 'theme_method', name: '手法・実験', color: '#0ea5e9' },
+          { id: 'theme_app', name: '応用・展開', color: '#10b981' },
+          { id: 'theme_review', name: 'レビュー・理論', color: '#f59e0b' }
+        ],
+        papers: [],
+        links: []
+      };
+    }
+
+    // =========================================================================
+    // Application State
+    // =========================================================================
+    let state = {
+      themes: [],
+      papers: [],
+      links: [],
+      selectedPaperId: null,
+      selectedLinkId: null,
+      searchQuery: '',
+      intentFilter: 'all',
+      zoom: 1,
+      showQuotePills: true,
+      docLang: 'en'
+    };
+
+    function setDocLang(lang) {
+      state.docLang = lang;
+      updateDocLangButtons();
+      renderInspector();
+    }
+
+    function updateDocLangButtons() {
+      document.querySelectorAll('.doc-lang-btn').forEach(btn => {
+        const active = btn.getAttribute('data-doc-lang') === state.docLang;
+        btn.className = active
+          ? 'doc-lang-btn px-2 py-0.5 text-[11px] font-bold rounded-md transition bg-slate-900 text-white shadow-xs'
+          : 'doc-lang-btn px-2 py-0.5 text-[11px] font-medium rounded-md transition text-slate-600 hover:text-slate-900';
+      });
+    }
+
+    function renderBilingualBlock(enText, jaText, emptyMsg = '未登録') {
+      const en = (enText || '').trim();
+      const ja = (jaText || '').trim();
+      if (!en && !ja) return `<span class="text-slate-400">${escapeHtml(emptyMsg)}</span>`;
+      if (state.docLang === 'en') {
+        if (en) return escapeHtml(en);
+        return `${escapeHtml(ja)} <span class="text-[10px] opacity-70">(日本語のみ)</span>`;
+      }
+      if (state.docLang === 'ja') {
+        if (ja) return escapeHtml(ja);
+        return `${escapeHtml(en)} <span class="text-[10px] opacity-70">(原文のみ)</span>`;
+      }
+      // both
+      const parts = [];
+      if (en) parts.push(`<div class="font-serif">${escapeHtml(en)}</div>`);
+      if (ja) parts.push(`<div class="mt-1.5 pt-1.5 border-t border-current/15 text-[11px] opacity-90 font-sans">${escapeHtml(ja)}</div>`);
+      return parts.join('');
+    }
+
+    function loadState() {
+      const def = getDefaultData();
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.themes) && Array.isArray(parsed.papers) && Array.isArray(parsed.links)) {
+            state.themes = parsed.themes;
+            state.papers = parsed.papers;
+            state.links = parsed.links;
+            state.selectedPaperId = state.papers[0]?.id || null;
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignore storage errors
+      }
+      state.themes = def.themes;
+      state.papers = def.papers;
+      state.links = def.links;
+    }
+
+    function saveState({ skipCloud = false } = {}) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          themes: state.themes,
+          papers: state.papers,
+          links: state.links
+        }));
+      } catch (e) {
+        // Ignore storage errors
+      }
+      if (!skipCloud) scheduleCloudPush();
+    }
+
+    // =========================================================================
+    // Filtering & Layout Computation
+    // =========================================================================
+    function getFilteredData() {
+      const q = state.searchQuery.trim().toLowerCase();
+      const intent = state.intentFilter;
+
+      // Filter links first by intent and query
+      const matchingLinks = state.links.filter(lnk => {
+        if (intent !== 'all' && lnk.intent !== intent) return false;
+        if (!q) return true;
+        const src = state.papers.find(p => p.id === lnk.sourceId);
+        const tgt = state.papers.find(p => p.id === lnk.targetId);
+        const inLink = (lnk.quote || '').toLowerCase().includes(q) ||
+                       (lnk.quoteJa || '').toLowerCase().includes(q) ||
+                       (lnk.note || '').toLowerCase().includes(q) ||
+                       (lnk.section || '').toLowerCase().includes(q);
+        const inSrc = src && ((src.title || '').toLowerCase().includes(q) || (src.authors || '').toLowerCase().includes(q));
+        const inTgt = tgt && ((tgt.title || '').toLowerCase().includes(q) || (tgt.authors || '').toLowerCase().includes(q));
+        return inLink || inSrc || inTgt;
+      });
+
+      const visiblePapers = state.papers.filter(p => {
+        if (!q && intent === 'all') return true;
+        if (intent !== 'all') {
+          const connected = matchingLinks.some(l => l.sourceId === p.id || l.targetId === p.id);
+          if (!connected) return false;
+        }
+        if (!q) return true;
+        const selfMatch = (p.title || '').toLowerCase().includes(q) ||
+                          (p.authors || '').toLowerCase().includes(q) ||
+                          (p.shortAuthor || '').toLowerCase().includes(q) ||
+                          String(p.year).includes(q) ||
+                          (p.summary || '').toLowerCase().includes(q) ||
+                          (p.summaryEn || '').toLowerCase().includes(q);
+        const linkMatch = matchingLinks.some(l => l.sourceId === p.id || l.targetId === p.id);
+        return selfMatch || linkMatch;
+      });
+
+      return { visiblePapers, matchingLinks };
+    }
+
+    function computeLayout(visiblePapers) {
+      // Unique sorted years ascending (top = older, bottom = newer)
+      const yearsSet = new Set(visiblePapers.map(p => Number(p.year)));
+      const years = Array.from(yearsSet).sort((a, b) => a - b);
+
+      // Group papers by (year, themeId) to prevent same-cell overlap
+      const cellGroups = {};
+      visiblePapers.forEach(p => {
+        const key = `${p.year}__${p.themeId}`;
+        if (!cellGroups[key]) cellGroups[key] = [];
+        cellGroups[key].push(p);
+      });
+
+      // Dynamic row height per year so stacked cards stay strictly inside their year band
+      const CARD_GAP_Y = 16;
+      const CARD_GAP_X = 16;
+      const yearTop = {};
+      let currentY = HEADER_HEIGHT;
+      years.forEach(y => {
+        yearTop[y] = currentY;
+        let maxInCell = 1;
+        state.themes.forEach(t => {
+          const cnt = (cellGroups[`${y}__${t.id}`] || []).length;
+          if (cnt > maxInCell) maxInCell = cnt;
+        });
+        const neededHeight = 20 + maxInCell * CARD_HEIGHT + Math.max(0, maxInCell - 1) * CARD_GAP_Y + 20;
+        currentY += Math.max(ROW_HEIGHT, neededHeight);
+      });
+
+      const positions = {};
+      visiblePapers.forEach(p => {
+        const themeIdx = Math.max(0, state.themes.findIndex(t => t.id === p.themeId));
+        const yr = Number(p.year);
+        const group = cellGroups[`${p.year}__${p.themeId}`] || [p];
+        const idxInGroup = group.indexOf(p);
+
+        const baseX = AXIS_WIDTH + themeIdx * LANE_WIDTH + (LANE_WIDTH - CARD_WIDTH) / 2;
+        const x = Math.max(AXIS_WIDTH + 8, baseX + (Number(p.xOffset) || 0));
+        const y = (yearTop[yr] ?? HEADER_HEIGHT) + 20 + idxInGroup * (CARD_HEIGHT + CARD_GAP_Y);
+
+        positions[p.id] = { x, y, w: CARD_WIDTH, h: CARD_HEIGHT };
+      });
+
+      // Collision-resolution pass so dragged or adjacent cards never overlap
+      const ordered = [...visiblePapers].sort((a, b) => {
+        const pa = positions[a.id], pb = positions[b.id];
+        return pa.y !== pb.y ? pa.y - pb.y : pa.x - pb.x;
+      });
+      const placed = [];
+      ordered.forEach(p => {
+        const pos = positions[p.id];
+        let guard = 0;
+        while (guard < 30) {
+          const hit = placed.find(q =>
+            Math.abs(pos.x - q.x) < CARD_WIDTH + CARD_GAP_X &&
+            Math.abs(pos.y - q.y) < CARD_HEIGHT + CARD_GAP_Y
+          );
+          if (!hit) break;
+          pos.x = hit.x + CARD_WIDTH + CARD_GAP_X;
+          guard++;
+        }
+        placed.push(pos);
+      });
+
+      let maxRight = AXIS_WIDTH + state.themes.length * LANE_WIDTH + 40;
+      let maxBottom = currentY + 40;
+      Object.values(positions).forEach(pos => {
+        if (pos.x + pos.w + 32 > maxRight) maxRight = pos.x + pos.w + 32;
+        if (pos.y + pos.h + 32 > maxBottom) maxBottom = pos.y + pos.h + 32;
+      });
+
+      const totalWidth = Math.max(maxRight, 820);
+      const totalHeight = Math.max(maxBottom, 520);
+
+      return { years, yearTop, positions, totalWidth, totalHeight };
+    }
+
+    // =========================================================================
+    // Rendering: 2D Citation Map
+    // =========================================================================
+    function renderMap() {
+      const container = document.getElementById('mapZoomContainer');
+      document.getElementById('btnEmptyAddPaper')?.addEventListener('click', () => openPaperModal(null));
+      document.getElementById('btnEmptyPaperpile')?.addEventListener('click', openPaperpileModal);
+      const { visiblePapers, matchingLinks } = getFilteredData();
+      const { years, yearTop, positions, totalWidth, totalHeight } = computeLayout(visiblePapers);
+
+      document.getElementById('statsSummary').textContent =
+        `表示中: 論文 ${visiblePapers.length}件 ／ 引用関係 ${matchingLinks.length}本`;
+
+      container.style.width = `${totalWidth}px`;
+      container.style.height = `${totalHeight}px`;
+      container.style.transform = `scale(${state.zoom})`;
+      document.getElementById('zoomLabel').textContent = `${Math.round(state.zoom * 100)}%`;
+
+      // Build HTML for canvas
+      let html = `<div class="relative bg-white rounded-xl border-2 border-slate-800 shadow-sm overflow-hidden" style="width:${totalWidth}px;height:${totalHeight}px;">`;
+
+      // 1. Horizontal Theme Lane Headers & Vertical Lane Dividers
+      html += `<div class="absolute top-0 left-0 right-0 flex border-b border-slate-200 bg-slate-50/95 z-20" style="height:${HEADER_HEIGHT}px;">`;
+      html += `<div class="shrink-0 border-r border-slate-200 flex items-center justify-center text-xs font-bold text-slate-500" style="width:${AXIS_WIDTH}px;">出版年</div>`;
+      state.themes.forEach((t, idx) => {
+        const count = visiblePapers.filter(p => p.themeId === t.id).length;
+        html += `
+          <div class="shrink-0 px-3 flex items-center justify-between border-r border-slate-200/80" style="width:${LANE_WIDTH}px;">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${escapeHtml(t.color)}"></span>
+              <span class="text-xs font-bold text-slate-800 truncate" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>
+            </div>
+            <span class="text-[11px] font-semibold text-slate-500 bg-white border border-slate-200 rounded-full px-2 py-0.5 shrink-0">${count}</span>
+          </div>`;
+      });
+      html += `</div>`;
+
+      // Vertical lane background stripes
+      state.themes.forEach((t, idx) => {
+        const left = AXIS_WIDTH + idx * LANE_WIDTH;
+        const stripe = idx % 2 === 1 ? 'bg-slate-50/40' : 'bg-white';
+        html += `<div class="absolute top-[${HEADER_HEIGHT}px] bottom-0 border-r border-dashed border-slate-200/80 ${stripe} pointer-events-none" style="left:${left}px;width:${LANE_WIDTH}px;top:${HEADER_HEIGHT}px;"></div>`;
+      });
+
+      // 2. Year Axis Labels & Dash-Dot Horizontal Guide Lines (matching user's sketch!)
+      years.forEach((y) => {
+        const lineY = (yearTop[y] ?? HEADER_HEIGHT) + 12;
+        html += `
+          <div class="absolute left-0 flex items-center pointer-events-none z-10" style="top:${lineY - 10}px;width:${totalWidth}px;">
+            <div class="shrink-0 text-right pr-3 text-xs font-bold text-slate-700 font-mono" style="width:${AXIS_WIDTH}px;">${y}</div>
+            <div class="flex-1 h-0 border-t-2" style="border-top-style:dashed;border-color:#94a3b8;opacity:0.55;"></div>
+          </div>`;
+      });
+
+      // 3. SVG Layer for Curved Citation Edges
+      html += `<svg class="absolute inset-0 z-10" width="${totalWidth}" height="${totalHeight}" style="overflow:visible;">
+        <defs>
+          ${Object.entries(INTENT_META).map(([k, m]) => `
+            <marker id="arrow-${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="${m.color}" />
+            </marker>
+          `).join('')}
+        </defs>`;
+
+      const quotePills = [];
+
+      matchingLinks.forEach(lnk => {
+        const srcPos = positions[lnk.sourceId];
+        const tgtPos = positions[lnk.targetId];
+        if (!srcPos || !tgtPos) return;
+
+        const meta = INTENT_META[lnk.intent] || INTENT_META.background;
+        const isSelected = state.selectedLinkId === lnk.id;
+        const isConnectedToSelectedPaper =
+          state.selectedPaperId && (lnk.sourceId === state.selectedPaperId || lnk.targetId === state.selectedPaperId);
+
+        // Start from bottom of older/cited paper, end at top of newer/citing paper
+        const startX = srcPos.x + srcPos.w / 2;
+        const startY = srcPos.y + srcPos.h;
+        const endX = tgtPos.x + tgtPos.w / 2;
+        const endY = tgtPos.y;
+
+        const dy = Math.max(40, Math.abs(endY - startY) * 0.52);
+        const c1x = startX;
+        const c1y = startY + dy;
+        const c2x = endX;
+        const c2y = endY - dy;
+
+        const pathD = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`;
+        const strokeWidth = isSelected ? 3.5 : (isConnectedToSelectedPaper ? 2.8 : 2);
+        const opacity = (state.selectedPaperId || state.selectedLinkId)
+          ? (isSelected || isConnectedToSelectedPaper ? 0.95 : 0.25)
+          : 0.78;
+
+        // Midpoint of cubic bezier at t=0.5
+        const midX = 0.125 * startX + 0.375 * c1x + 0.375 * c2x + 0.125 * endX;
+        const midY = 0.125 * startY + 0.375 * c1y + 0.375 * c2y + 0.125 * endY;
+
+        html += `
+          <path d="${pathD}" fill="none" stroke="transparent" stroke-width="14" class="cursor-pointer" data-link-id="${lnk.id}" />
+          <path d="${pathD}" fill="none" stroke="${meta.color}" stroke-width="${strokeWidth}" stroke-opacity="${opacity}" marker-end="url(#arrow-${lnk.intent || 'background'})" class="edge-path" data-link-id="${lnk.id}" />
+        `;
+
+        if (state.showQuotePills) {
+          quotePills.push({ id: lnk.id, x: midX, y: midY, color: meta.color, isSelected, quote: lnk.quote });
+        }
+      });
+
+      html += `</svg>`;
+
+      // 4. Quote Pill Buttons on Edges
+      quotePills.forEach(pill => {
+        const ring = pill.isSelected ? 'ring-2 ring-slate-900 scale-110' : '';
+        html += `
+          <button type="button" data-link-id="${pill.id}" title="${escapeHtml(pill.quote || '引用文言を見る')}"
+            class="absolute -translate-x-1/2 -translate-y-1/2 z-20 w-6 h-6 rounded-full bg-white border-2 shadow-sm hover:scale-110 transition flex items-center justify-center text-[11px] ${ring}"
+            style="left:${pill.x}px;top:${pill.y}px;border-color:${pill.color};">
+            💬
+          </button>`;
+      });
+
+      function getCitationTierStyle(citations) {
+        const c = Number(citations || 0);
+        if (c >= 3000) return { border: 'border-rose-500', ring: 'ring-rose-200/80', badge: 'text-rose-800 bg-rose-100/90' };
+        if (c >= 2000) return { border: 'border-amber-500', ring: 'ring-amber-200/80', badge: 'text-amber-800 bg-amber-100/90' };
+        if (c >= 1000) return { border: 'border-emerald-500', ring: 'ring-emerald-200/80', badge: 'text-emerald-800 bg-emerald-100/90' };
+        if (c >= 100)  return { border: 'border-sky-500', ring: 'ring-sky-200/80', badge: 'text-sky-800 bg-sky-100/90' };
+        return { border: 'border-slate-400', ring: 'ring-slate-200/80', badge: 'text-slate-700 bg-slate-200/80' };
+      }
+
+      // 5. Paper Nodes (Border color reflects citation count tier)
+      visiblePapers.forEach(p => {
+        const pos = positions[p.id];
+        const isSelected = state.selectedPaperId === p.id;
+        const inCount = state.links.filter(l => l.sourceId === p.id).length;
+        const outCount = state.links.filter(l => l.targetId === p.id).length;
+        const tier = getCitationTierStyle(p.citations);
+
+        const borderClass = isSelected
+          ? `border-[3.5px] ${tier.border} ring-4 ${tier.ring} bg-white shadow-md`
+          : `border-[2.5px] ${tier.border} bg-slate-100/95 hover:bg-white`;
+
+        html += `
+          <div data-paper-id="${p.id}"
+            class="paper-card absolute rounded-lg ${borderClass} px-3 py-2 cursor-pointer flex flex-col justify-between z-20 shadow-sm"
+            style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;">
+            <div>
+              <div class="text-[11px] font-bold text-slate-900 leading-snug line-clamp-2" title="${escapeHtml(p.title)}">
+                ${escapeHtml(p.title)}
+              </div>
+              <div class="text-[11px] text-slate-600 truncate mt-0.5">
+                ${escapeHtml(p.shortAuthor || p.authors)} (${p.year})
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-1 pt-1 border-t border-slate-200/80 text-[10px]">
+              <span class="inline-flex items-center gap-1 font-bold ${tier.badge} px-1.5 py-0.5 rounded">
+                引用 ${Number(p.citations || 0).toLocaleString()}
+              </span>
+              <span class="text-slate-500 font-medium">
+                被引用 ${inCount} · 参照 ${outCount}
+              </span>
+            </div>
+          </div>`;
+      });
+
+      if (visiblePapers.length === 0) {
+        const isCompletelyEmpty = state.papers.length === 0;
+        html += `
+          <div class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 z-20 p-6 text-center">
+            <div class="bg-white/95 border border-slate-200 rounded-2xl p-6 shadow-sm max-w-md space-y-3">
+              <p class="text-sm font-bold text-slate-800">${isCompletelyEmpty ? 'まだ論文が登録されていません' : '該当する論文がありません'}</p>
+              <p class="text-xs text-slate-500 leading-relaxed">
+                ${isCompletelyEmpty
+                  ? '「+ 論文を追加」から1件ずつ登録するか、「Paperpile取込」からBibTeX / JSONを一括インポートしてマップを作成できます。'
+                  : '検索条件やフィルターを変更してください。'}
+              </p>
+              ${isCompletelyEmpty ? `
+                <div class="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button type="button" id="btnEmptyAddPaper" class="px-3.5 py-2 text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg shadow-xs transition">+ 論文を追加</button>
+                  <button type="button" id="btnEmptyPaperpile" class="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-xs transition">Paperpileから一括取込</button>
+                </div>` : ''}
+            </div>
+          </div>`;
+      }
+
+      html += `</div>`;
+      container.innerHTML = html;
+
+      // Attach click & drag listeners
+      attachCanvasListeners();
+    }
+
+    function attachCanvasListeners() {
+      const container = document.getElementById('mapZoomContainer');
+
+      // Edge clicks
+      container.querySelectorAll('[data-link-id]').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedLinkId = el.getAttribute('data-link-id');
+          state.selectedPaperId = null;
+          renderMap();
+          renderInspector();
+        });
+      });
+
+      // Paper clicks + horizontal drag
+      container.querySelectorAll('[data-paper-id]').forEach(card => {
+        let startX = 0;
+        let origOffset = 0;
+        let moved = false;
+
+        card.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
+          const paperId = card.getAttribute('data-paper-id');
+          const paper = state.papers.find(p => p.id === paperId);
+          if (!paper) return;
+
+          startX = e.clientX;
+          origOffset = Number(paper.xOffset) || 0;
+          moved = false;
+
+          const onMove = (ev) => {
+            const dx = (ev.clientX - startX) / state.zoom;
+            if (Math.abs(dx) > 4) moved = true;
+            if (moved) {
+              paper.xOffset = Math.round(origOffset + dx);
+              renderMap();
+            }
+          };
+
+          const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            if (moved) {
+              // Check if dragged into another theme lane
+              const rect = card.getBoundingClientRect();
+              const vpRect = document.getElementById('mapViewport').getBoundingClientRect();
+              const scrollLeft = document.getElementById('mapViewport').scrollLeft;
+              const centerX = (rect.left - vpRect.left + scrollLeft + rect.width / 2) / state.zoom;
+              const laneIdx = Math.floor((centerX - AXIS_WIDTH) / LANE_WIDTH);
+              if (laneIdx >= 0 && laneIdx < state.themes.length && state.themes[laneIdx].id !== paper.themeId) {
+                paper.themeId = state.themes[laneIdx].id;
+                paper.xOffset = 0;
+                showToast(`「${state.themes[laneIdx].name}」へ移動しました`);
+              }
+              saveState();
+              renderMap();
+              renderInspector();
+            } else {
+              state.selectedPaperId = paperId;
+              state.selectedLinkId = null;
+              renderMap();
+              renderInspector();
+            }
+          };
+
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        });
+      });
+    }
+
+    // =========================================================================
+    // Rendering: Inspector Panel
+    // =========================================================================
+    function renderInspector() {
+      const panel = document.getElementById('inspectorContent');
+
+      // 1. Selected Citation Edge View
+      if (state.selectedLinkId) {
+        const lnk = state.links.find(l => l.id === state.selectedLinkId);
+        if (!lnk) {
+          state.selectedLinkId = null;
+          renderInspector();
+          return;
+        }
+        const src = state.papers.find(p => p.id === lnk.sourceId);
+        const tgt = state.papers.find(p => p.id === lnk.targetId);
+        const meta = INTENT_META[lnk.intent] || INTENT_META.background;
+
+        panel.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${meta.bg} ${meta.text} ${meta.border}">
+              ${meta.label}
+            </span>
+            <div class="flex items-center gap-1">
+              <button id="btnEditSelectedLink" type="button" class="px-2.5 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg">編集</button>
+              <button id="btnDeleteSelectedLink" type="button" class="px-2.5 py-1 text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg">削除</button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer hover:border-amber-400 transition" data-jump-paper="${tgt?.id || ''}">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400">引用元 (Citing Paper)</div>
+              <div class="text-xs font-bold text-slate-900 mt-0.5">${escapeHtml(tgt?.title || '不明')}</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">${escapeHtml(tgt?.shortAuthor || '')} (${tgt?.year || ''})</div>
+            </div>
+
+            <div class="flex justify-center text-slate-400 text-xs font-bold">↓ 引用 (cites)</div>
+
+            <div class="p-3 rounded-xl bg-amber-50/50 border border-amber-300 cursor-pointer hover:border-amber-500 transition" data-jump-paper="${src?.id || ''}">
+              <div class="text-[10px] font-bold uppercase tracking-wider text-amber-700">被引用先 (Cited Paper)</div>
+              <div class="text-xs font-bold text-slate-900 mt-0.5">${escapeHtml(src?.title || '不明')}</div>
+              <div class="text-[11px] text-slate-600 mt-0.5">${escapeHtml(src?.shortAuthor || '')} (${src?.year || ''}) · 引用数 ${Number(src?.citations || 0).toLocaleString()}</div>
+            </div>
+          </div>
+
+          <div class="space-y-2 pt-2 border-t border-slate-200">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-xs font-bold text-slate-700">本文中の引用文言</h3>
+              <div class="flex items-center gap-1.5">
+                ${lnk.section ? `<span class="text-[11px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">${escapeHtml(lnk.section)}</span>` : ''}
+                <button type="button" data-quick-lang class="px-2 py-0.5 text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded transition">
+                  ${state.docLang === 'en' ? '日本語に切替' : (state.docLang === 'ja' ? '日英併記' : '英語に戻す')}
+                </button>
+              </div>
+            </div>
+            <blockquote class="p-3.5 rounded-xl bg-slate-900 text-slate-100 text-xs leading-relaxed border-l-4 border-amber-400">
+              ${renderBilingualBlock(lnk.quote, lnk.quoteJa, '引用文言が未登録です')}
+            </blockquote>
+          </div>
+
+          ${lnk.note ? `
+            <div class="space-y-1.5">
+              <h3 class="text-xs font-bold text-slate-700">引用の意図・メモ</h3>
+              <p class="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200">${escapeHtml(lnk.note)}</p>
+            </div>` : ''}
+        `;
+
+        panel.querySelectorAll('[data-jump-paper]').forEach(el => {
+          el.addEventListener('click', () => {
+            const pid = el.getAttribute('data-jump-paper');
+            if (pid) {
+              state.selectedPaperId = pid;
+              state.selectedLinkId = null;
+              renderMap();
+              renderInspector();
+            }
+          });
+        });
+
+        document.getElementById('btnEditSelectedLink')?.addEventListener('click', () => openLinkModal(lnk));
+        document.getElementById('btnDeleteSelectedLink')?.addEventListener('click', () => {
+          state.links = state.links.filter(l => l.id !== lnk.id);
+          state.selectedLinkId = null;
+          saveState();
+          renderMap();
+          renderInspector();
+          showToast('引用線を削除しました');
+        });
+        return;
+      }
+
+      // 2. Selected Paper View
+      if (state.selectedPaperId) {
+        const p = state.papers.find(x => x.id === state.selectedPaperId);
+        if (!p) {
+          state.selectedPaperId = null;
+          renderInspector();
+          return;
+        }
+        const theme = state.themes.find(t => t.id === p.themeId);
+        const incoming = state.links.filter(l => l.sourceId === p.id);
+        const outgoing = state.links.filter(l => l.targetId === p.id);
+
+        panel.innerHTML = `
+          <div class="space-y-3">
+            <div class="flex items-start justify-between gap-2">
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">
+                <span class="w-2 h-2 rounded-full" style="background:${escapeHtml(theme?.color || '#64748b')}"></span>
+                ${escapeHtml(theme?.name || '未分類')}
+              </span>
+              <div class="flex items-center gap-1 shrink-0">
+                <button id="btnEditPaper" type="button" class="px-2 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg">編集</button>
+                <button id="btnDeletePaper" type="button" class="px-2 py-1 text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg">削除</button>
+              </div>
+            </div>
+
+            <div>
+              <h2 class="text-sm font-bold text-slate-900 leading-snug">${escapeHtml(p.title)}</h2>
+              <p class="text-xs text-slate-600 mt-1">${escapeHtml(p.authors)}</p>
+              <div class="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                <span class="font-bold bg-slate-900 text-white px-2 py-0.5 rounded">${p.year}</span>
+                <span class="text-slate-500">${escapeHtml(p.journal || '')}</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2 pt-1">
+              <div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-center">
+                <div class="text-[10px] font-semibold text-amber-700">総引用数</div>
+                <div class="text-base font-bold text-amber-900">${Number(p.citations || 0).toLocaleString()}</div>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
+                <div class="text-[10px] font-semibold text-slate-500">マップ内 被引用</div>
+                <div class="text-base font-bold text-slate-800">${incoming.length}</div>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
+                <div class="text-[10px] font-semibold text-slate-500">マップ内 参照</div>
+                <div class="text-base font-bold text-slate-800">${outgoing.length}</div>
+              </div>
+            </div>
+
+            <div class="space-y-1.5">
+              <div class="flex flex-wrap items-center gap-2">
+                ${p.doi ? `
+                  <a href="https://doi.org/${encodeURIComponent(p.doi)}" target="_blank" rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
+                    DOI: ${escapeHtml(p.doi)} ↗
+                  </a>` : ''}
+                ${p.paperpileUrl ? `
+                  <a href="${escapeHtml(p.paperpileUrl)}" target="_blank" rel="noopener noreferrer"
+                    class="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded hover:bg-indigo-100">
+                    Paperpileリンクを開く ↗
+                  </a>` : ''}
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <input id="inpPaperpileUrl" type="url" placeholder="Paperpile共有URL / Drive PDF URLを保存..." value="${escapeHtml(p.paperpileUrl || '')}"
+                  class="flex-1 min-w-0 px-2.5 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white" />
+                <button id="btnSavePaperpileUrl" type="button" class="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg shrink-0">保存</button>
+                <button id="btnOpenPaperpile" type="button" class="px-2.5 py-1 text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shrink-0" title="タイトル/DOIをコピーしてPaperpileを開く">
+                  Paperpileで検索 ↗
+                </button>
+              </div>
+            </div>
+
+            ${(p.summary || p.summaryEn) ? `
+              <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-[10px] font-bold text-slate-400 uppercase">概要 / Abstract</span>
+                  <button type="button" data-quick-lang class="px-1.5 py-0.5 text-[10px] font-bold bg-white border border-slate-200 hover:border-amber-400 text-slate-700 rounded transition">
+                    ${state.docLang === 'en' ? 'JAへ' : (state.docLang === 'ja' ? '日英' : 'ENへ')}
+                  </button>
+                </div>
+                <div>${renderBilingualBlock(p.summaryEn, p.summary)}</div>
+              </div>` : ''}
+
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button id="btnExpandCitedBy" type="button" class="px-2.5 py-2 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl transition text-center leading-tight">
+                ↓ この論文を引用している<br/>論文を自動取得
+              </button>
+              <button id="btnExpandRefs" type="button" class="px-2.5 py-2 text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-xl transition text-center leading-tight">
+                ↑ この論文が引用している<br/>論文を自動取得
+              </button>
+            </div>
+          </div>
+
+          <!-- Incoming Citations (with quotes!) -->
+          <div class="pt-3 border-t border-slate-200 space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-bold text-slate-800">この論文を引用している文献 (${incoming.length})</h3>
+              <button id="btnAddIncomingLink" type="button" class="text-[11px] font-semibold text-amber-700 hover:text-amber-900">+ 追加</button>
+            </div>
+            ${incoming.length === 0 ? `<p class="text-xs text-slate-400">まだ登録されていません。</p>` : ''}
+            <div class="space-y-2.5">
+              ${incoming.map(lnk => {
+                const citer = state.papers.find(x => x.id === lnk.targetId);
+                const meta = INTENT_META[lnk.intent] || INTENT_META.background;
+                return `
+                  <div class="p-3 rounded-xl border border-slate-200 hover:border-amber-400 transition cursor-pointer bg-white space-y-1.5" data-inspect-link="${lnk.id}">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-xs font-bold text-slate-800 truncate">${escapeHtml(citer?.shortAuthor || '')} (${citer?.year || ''})</span>
+                      <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ${meta.bg} ${meta.text}">${meta.label}</span>
+                    </div>
+                    <blockquote class="text-[11px] text-slate-700 bg-slate-50 p-2 rounded-lg border-l-2 border-amber-400 leading-relaxed">
+                      ${renderBilingualBlock(lnk.quote, lnk.quoteJa, '引用文言なし')}
+                    </blockquote>
+                    ${lnk.note ? `<p class="text-[11px] text-slate-500">${escapeHtml(lnk.note)}</p>` : ''}
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <!-- Outgoing References (with quotes!) -->
+          <div class="pt-3 border-t border-slate-200 space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-bold text-slate-800">この論文が引用している文献 (${outgoing.length})</h3>
+              <button id="btnAddOutgoingLink" type="button" class="text-[11px] font-semibold text-amber-700 hover:text-amber-900">+ 追加</button>
+            </div>
+            ${outgoing.length === 0 ? `<p class="text-xs text-slate-400">まだ登録されていません。</p>` : ''}
+            <div class="space-y-2.5">
+              ${outgoing.map(lnk => {
+                const cited = state.papers.find(x => x.id === lnk.sourceId);
+                const meta = INTENT_META[lnk.intent] || INTENT_META.background;
+                return `
+                  <div class="p-3 rounded-xl border border-slate-200 hover:border-amber-400 transition cursor-pointer bg-white space-y-1.5" data-inspect-link="${lnk.id}">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-xs font-bold text-slate-800 truncate">→ ${escapeHtml(cited?.shortAuthor || '')} (${cited?.year || ''})</span>
+                      <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ${meta.bg} ${meta.text}">${meta.label}</span>
+                    </div>
+                    <blockquote class="text-[11px] text-slate-700 bg-slate-50 p-2 rounded-lg border-l-2 border-slate-400 leading-relaxed">
+                      ${renderBilingualBlock(lnk.quote, lnk.quoteJa, '引用文言なし')}
+                    </blockquote>
+                  </div>`;
+              }).join('')}
+            </div>
+          </div>
+        `;
+
+        panel.querySelectorAll('[data-inspect-link]').forEach(el => {
+          el.addEventListener('click', () => {
+            state.selectedLinkId = el.getAttribute('data-inspect-link');
+            state.selectedPaperId = null;
+            renderMap();
+            renderInspector();
+          });
+        });
+
+        document.getElementById('btnEditPaper')?.addEventListener('click', () => openPaperModal(p));
+        document.getElementById('btnDeletePaper')?.addEventListener('click', () => {
+          state.papers = state.papers.filter(x => x.id !== p.id);
+          state.links = state.links.filter(l => l.sourceId !== p.id && l.targetId !== p.id);
+          state.selectedPaperId = state.papers[0]?.id || null;
+          saveState();
+          renderMap();
+          renderInspector();
+          showToast('論文と関連する引用線を削除しました');
+        });
+        document.getElementById('btnAddIncomingLink')?.addEventListener('click', () => openLinkModal(null, { sourceId: p.id }));
+        document.getElementById('btnAddOutgoingLink')?.addEventListener('click', () => openLinkModal(null, { targetId: p.id }));
+        document.getElementById('btnSavePaperpileUrl')?.addEventListener('click', () => {
+          const val = document.getElementById('inpPaperpileUrl').value.trim();
+          p.paperpileUrl = val;
+          saveState();
+          renderInspector();
+          showToast(val ? 'Paperpile URLを保存しました' : 'Paperpile URLをクリアしました');
+        });
+        document.getElementById('btnOpenPaperpile')?.addEventListener('click', () => {
+          const queryText = (p.title || p.doi || '').trim();
+          if (queryText) {
+            try {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(queryText).catch(() => {});
+              } else {
+                const tmp = document.createElement('textarea');
+                tmp.value = queryText;
+                document.body.appendChild(tmp);
+                tmp.select();
+                document.execCommand('copy');
+                document.body.removeChild(tmp);
+              }
+            } catch (e) {}
+            showToast('タイトルをコピーしました。Paperpileの検索欄に貼り付けてください');
+          }
+          window.open('https://paperpile.com/app', '_blank', 'noopener,noreferrer');
+        });
+        document.getElementById('btnExpandCitedBy')?.addEventListener('click', () => openExpandPaperModal(p, 'citedBy'));
+        document.getElementById('btnExpandRefs')?.addEventListener('click', () => openExpandPaperModal(p, 'refs'));
+        return;
+      }
+
+      // 3. Default Overview
+      panel.innerHTML = `
+        <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+          <h2 class="text-sm font-bold text-slate-900">引用文言・文献マップの概要</h2>
+          <p class="text-xs text-slate-600 leading-relaxed">
+            左側のマップで論文カードまたは引用線（💬）をクリックすると、引用数や本文中でどのように引用されているかを確認できます。
+          </p>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-xs font-bold text-slate-700">登録されている引用文言一覧 (${state.links.length})</h3>
+          ${state.links.map(lnk => {
+            const src = state.papers.find(p => p.id === lnk.sourceId);
+            const tgt = state.papers.find(p => p.id === lnk.targetId);
+            const meta = INTENT_META[lnk.intent] || INTENT_META.background;
+            return `
+              <div class="p-3 rounded-xl border border-slate-200 hover:border-amber-400 cursor-pointer space-y-1" data-inspect-link="${lnk.id}">
+                <div class="flex items-center justify-between text-[11px]">
+                  <span class="font-bold text-slate-800">${escapeHtml(tgt?.shortAuthor || '')} (${tgt?.year || ''}) → ${escapeHtml(src?.shortAuthor || '')} (${src?.year || ''})</span>
+                  <span class="px-1.5 py-0.5 rounded ${meta.bg} ${meta.text} font-semibold">${meta.label}</span>
+                </div>
+                <div class="text-[11px] text-slate-600 line-clamp-2">${renderBilingualBlock(lnk.quote, lnk.quoteJa, '引用文言なし')}</div>
+              </div>`;
+          }).join('')}
+        </div>
+      `;
+
+      panel.querySelectorAll('[data-inspect-link]').forEach(el => {
+        el.addEventListener('click', () => {
+          state.selectedLinkId = el.getAttribute('data-inspect-link');
+          state.selectedPaperId = null;
+          renderMap();
+          renderInspector();
+        });
+      });
+    }
+
+    // =========================================================================
+    // Modals: Add/Edit Paper (with OpenAlex Search!)
+    // =========================================================================
+    function openModal(title, bodyHtml) {
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalBody').innerHTML = bodyHtml;
+      const bd = document.getElementById('modalBackdrop');
+      bd.classList.remove('hidden');
+      bd.classList.add('flex');
+    }
+
+    function closeModal() {
+      const bd = document.getElementById('modalBackdrop');
+      bd.classList.add('hidden');
+      bd.classList.remove('flex');
+    }
+
+    function openPaperModal(existing = null) {
+      const isEdit = !!existing;
+      const themeOptions = state.themes.map(t =>
+        `<option value="${t.id}" ${existing?.themeId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
+      ).join('');
+
+      openModal(isEdit ? '論文情報を編集' : '論文を追加', `
+        ${!isEdit ? `
+          <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+            <label class="block text-xs font-bold text-slate-700">OpenAlexから論文を検索して自動入力（任意）</label>
+            <div class="flex gap-2">
+              <input id="oaQuery" type="text" placeholder="論文タイトルやDOIを入力..." class="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <button id="btnOaSearch" type="button" class="px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg hover:bg-slate-800 shrink-0">検索</button>
+            </div>
+            <div id="oaResults" class="space-y-1.5 max-h-40 overflow-y-auto"></div>
+          </div>
+        ` : ''}
+
+        <form id="paperForm" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">論文タイトル *</label>
+            <input id="fTitle" type="text" required value="${escapeHtml(existing?.title || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">短縮著者名 (カード表示) *</label>
+              <input id="fShortAuthor" type="text" required placeholder="例: Maze et al." value="${escapeHtml(existing?.shortAuthor || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">出版年 *</label>
+              <input id="fYear" type="number" required min="1900" max="2100" value="${existing?.year || 2024}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">全著者名</label>
+            <input id="fAuthors" type="text" value="${escapeHtml(existing?.authors || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">分野・テーマレーン *</label>
+              <select id="fTheme" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">${themeOptions}</select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">引用数 (Citations)</label>
+              <input id="fCitations" type="number" min="0" value="${existing?.citations ?? 0}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ジャーナル / 会議名</label>
+              <input id="fJournal" type="text" value="${escapeHtml(existing?.journal || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">DOI</label>
+              <input id="fDoi" type="text" placeholder="10.1038/..." value="${escapeHtml(existing?.doi || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Paperpile共有リンク / Google Drive PDF URL</label>
+            <input id="fPaperpileUrl" type="url" placeholder="https://paperpile.com/shared/... または Drive URL" value="${escapeHtml(existing?.paperpileUrl || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">概要・メモ（日本語）</label>
+            <textarea id="fSummary" rows="2" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg">${escapeHtml(existing?.summary || '')}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Summary / Abstract（英語）</label>
+            <textarea id="fSummaryEn" rows="2" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg font-serif">${escapeHtml(existing?.summaryEn || '')}</textarea>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button type="button" id="btnCancelPaper" class="px-4 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+            <button type="submit" class="px-4 py-1.5 text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg">${isEdit ? '更新する' : '追加する'}</button>
+          </div>
+        </form>
+      `);
+
+      document.getElementById('btnCancelPaper').addEventListener('click', closeModal);
+
+      // OpenAlex live search handler
+      document.getElementById('btnOaSearch')?.addEventListener('click', async () => {
+        const q = document.getElementById('oaQuery').value.trim();
+        const resBox = document.getElementById('oaResults');
+        if (!q) return;
+        resBox.innerHTML = `<div class="text-xs text-slate-500 py-1">OpenAlexを検索中...</div>`;
+        try {
+          const resp = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(q)}&per-page=5`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const works = data.results || [];
+          if (works.length === 0) {
+            resBox.innerHTML = `<div class="text-xs text-slate-500 py-1">見つかりませんでした。手動で入力してください。</div>`;
+            return;
+          }
+          resBox.innerHTML = works.map((w, i) => {
+            const firstAuthor = w.authorships?.[0]?.author?.display_name || 'Unknown';
+            const shortA = w.authorships?.length > 1 ? `${firstAuthor} et al.` : firstAuthor;
+            return `
+              <button type="button" data-oa-idx="${i}" class="w-full text-left p-2 rounded-lg bg-white border border-slate-200 hover:border-amber-400 text-xs transition">
+                <div class="font-bold text-slate-800 line-clamp-1">${escapeHtml(w.title)}</div>
+                <div class="text-[11px] text-slate-500">${escapeHtml(shortA)} (${w.publication_year || ''}) · 引用 ${w.cited_by_count ?? 0}</div>
+              </button>`;
+          }).join('');
+
+          resBox.querySelectorAll('[data-oa-idx]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const w = works[Number(btn.getAttribute('data-oa-idx'))];
+              const authorsList = (w.authorships || []).map(a => a.author?.display_name).filter(Boolean);
+              const firstA = authorsList[0] || '';
+              document.getElementById('fTitle').value = w.title || '';
+              document.getElementById('fAuthors').value = authorsList.join(', ');
+              document.getElementById('fShortAuthor').value = authorsList.length > 1 ? `${firstA} et al.` : firstA;
+              document.getElementById('fYear').value = w.publication_year || 2024;
+              document.getElementById('fCitations').value = w.cited_by_count ?? 0;
+              document.getElementById('fJournal').value = w.primary_location?.source?.display_name || '';
+              document.getElementById('fDoi').value = (w.doi || '').replace('https://doi.org/', '');
+              showToast('OpenAlexから書誌情報を入力しました');
+            });
+          });
+        } catch (err) {
+          resBox.innerHTML = `<div class="text-xs text-rose-600 py-1">OpenAlexへの接続に失敗しました (${escapeHtml(err.message)})。手動入力をご利用ください。</div>`;
+        }
+      });
+
+      document.getElementById('paperForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const payload = {
+          id: existing ? existing.id : uid('paper'),
+          title: document.getElementById('fTitle').value.trim(),
+          shortAuthor: document.getElementById('fShortAuthor').value.trim(),
+          authors: document.getElementById('fAuthors').value.trim(),
+          year: Number(document.getElementById('fYear').value),
+          themeId: document.getElementById('fTheme').value,
+          citations: Number(document.getElementById('fCitations').value) || 0,
+          journal: document.getElementById('fJournal').value.trim(),
+          doi: document.getElementById('fDoi').value.trim(),
+          paperpileUrl: document.getElementById('fPaperpileUrl').value.trim(),
+          summary: document.getElementById('fSummary').value.trim(),
+          summaryEn: document.getElementById('fSummaryEn').value.trim(),
+          openAlexId: existing?.openAlexId || '',
+          oaTopics: existing?.oaTopics || [],
+          oaConcepts: existing?.oaConcepts || [],
+          xOffset: existing ? existing.xOffset : 0
+        };
+        if (isEdit) {
+          const idx = state.papers.findIndex(x => x.id === existing.id);
+          if (idx >= 0) state.papers[idx] = payload;
+        } else {
+          state.papers.push(payload);
+        }
+        state.selectedPaperId = payload.id;
+        state.selectedLinkId = null;
+        saveState();
+        closeModal();
+        renderMap();
+        renderInspector();
+        showToast(isEdit ? '論文情報を更新しました' : '論文を追加しました');
+      });
+    }
+
+    // =========================================================================
+    // Modals: Add / Edit Citation Link
+    // =========================================================================
+    function openLinkModal(existing = null, defaults = {}) {
+      if (state.papers.length < 2) {
+        showToast('引用線を引くには2件以上の論文が必要です');
+        return;
+      }
+      const isEdit = !!existing;
+      const sortedPapers = [...state.papers].sort((a, b) => a.year - b.year);
+      const srcDefault = existing?.sourceId || defaults.sourceId || sortedPapers[0].id;
+      const tgtDefault = existing?.targetId || defaults.targetId || sortedPapers[sortedPapers.length - 1].id;
+
+      const makeOpts = (selId) => sortedPapers.map(p =>
+        `<option value="${p.id}" ${p.id === selId ? 'selected' : ''}>[${p.year}] ${escapeHtml(p.shortAuthor)} — ${escapeHtml(p.title.slice(0, 42))}</option>`
+      ).join('');
+
+      openModal(isEdit ? '引用関係・文言を編集' : '引用関係と引用文言を追加', `
+        <form id="linkForm" class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">被引用先（古い論文・引用される側）*</label>
+            <select id="lSource" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">${makeOpts(srcDefault)}</select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">引用元（新しい論文・引用する側）*</label>
+            <select id="lTarget" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">${makeOpts(tgtDefault)}</select>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">引用の文脈タイプ *</label>
+              <select id="lIntent" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                ${Object.entries(INTENT_META).map(([k, m]) =>
+                  `<option value="${k}" ${(existing?.intent || 'background') === k ? 'selected' : ''}>${m.label}</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">引用箇所のセクション</label>
+              <input id="lSection" type="text" placeholder="例: Introduction / Methods" value="${escapeHtml(existing?.section || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">本文中の引用文言（英語原文）*</label>
+            <textarea id="lQuote" rows="2" required placeholder="論文本文中の引用箇所をそのまま入力..." class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg font-serif">${escapeHtml(existing?.quote || '')}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">本文中の引用文言（日本語訳）</label>
+            <textarea id="lQuoteJa" rows="2" placeholder="日本語訳（任意）を入力すると英語/日本語を切り替えられます..." class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg">${escapeHtml(existing?.quoteJa || '')}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">補足メモ（なぜ・どう引用されているか）</label>
+            <textarea id="lNote" rows="2" placeholder="自分の研究との関係やポイントなど..." class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg">${escapeHtml(existing?.note || '')}</textarea>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button type="button" id="btnCancelLink" class="px-4 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+            <button type="submit" class="px-4 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg">${isEdit ? '更新する' : '追加する'}</button>
+          </div>
+        </form>
+      `);
+
+      document.getElementById('btnCancelLink').addEventListener('click', closeModal);
+      document.getElementById('linkForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const sourceId = document.getElementById('lSource').value;
+        const targetId = document.getElementById('lTarget').value;
+        if (sourceId === targetId) {
+          showToast('同じ論文同士は結べません');
+          return;
+        }
+        const payload = {
+          id: existing ? existing.id : uid('lnk'),
+          sourceId,
+          targetId,
+          intent: document.getElementById('lIntent').value,
+          section: document.getElementById('lSection').value.trim(),
+          quote: document.getElementById('lQuote').value.trim(),
+          quoteJa: document.getElementById('lQuoteJa').value.trim(),
+          note: document.getElementById('lNote').value.trim()
+        };
+        if (isEdit) {
+          const idx = state.links.findIndex(x => x.id === existing.id);
+          if (idx >= 0) state.links[idx] = payload;
+        } else {
+          state.links.push(payload);
+        }
+        state.selectedLinkId = payload.id;
+        state.selectedPaperId = null;
+        saveState();
+        closeModal();
+        renderMap();
+        renderInspector();
+        showToast(isEdit ? '引用関係を更新しました' : '引用線を追加しました');
+      });
+    }
+
+    // =========================================================================
+    // Modals: Theme Manager & JSON Import/Export
+    // =========================================================================
+    function openThemesModal() {
+      const renderRows = () => state.themes.map((t, idx) => `
+        <div class="flex items-center gap-2">
+          <input type="color" value="${escapeHtml(t.color)}" data-tcolor="${idx}" class="w-8 h-8 rounded cursor-pointer border border-slate-200" />
+          <input type="text" value="${escapeHtml(t.name)}" data-tname="${idx}" class="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+          ${state.themes.length > 1 ? `<button type="button" data-tdel="${idx}" class="px-2.5 py-1.5 text-xs bg-rose-50 text-rose-700 rounded-lg hover:bg-rose-100">削除</button>` : ''}
+        </div>
+      `).join('');
+
+      openModal('横軸（分野・テーマレーン）の設定', `
+        <div id="themeRows" class="space-y-2">${renderRows()}</div>
+        <div class="flex items-center justify-between pt-3 border-t border-slate-200">
+          <button id="btnAddThemeRow" type="button" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg">+ テーマを追加</button>
+          <button id="btnSaveThemes" type="button" class="px-4 py-1.5 text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg">保存する</button>
+        </div>
+      `);
+
+      const bindThemeActions = () => {
+        document.querySelectorAll('[data-tdel]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = Number(btn.getAttribute('data-tdel'));
+            const removedId = state.themes[idx].id;
+            state.themes.splice(idx, 1);
+            const fallbackId = state.themes[0].id;
+            state.papers.forEach(p => { if (p.themeId === removedId) p.themeId = fallbackId; });
+            document.getElementById('themeRows').innerHTML = renderRows();
+            bindThemeActions();
+          });
+        });
+      };
+      bindThemeActions();
+
+      document.getElementById('btnAddThemeRow').addEventListener('click', () => {
+        state.themes.push({ id: uid('theme'), name: '新しいテーマ', color: '#8b5cf6' });
+        document.getElementById('themeRows').innerHTML = renderRows();
+        bindThemeActions();
+      });
+
+      document.getElementById('btnSaveThemes').addEventListener('click', () => {
+        document.querySelectorAll('[data-tname]').forEach(inp => {
+          const i = Number(inp.getAttribute('data-tname'));
+          if (state.themes[i]) state.themes[i].name = inp.value.trim() || `テーマ ${i + 1}`;
+        });
+        document.querySelectorAll('[data-tcolor]').forEach(inp => {
+          const i = Number(inp.getAttribute('data-tcolor'));
+          if (state.themes[i]) state.themes[i].color = inp.value;
+        });
+        saveState();
+        closeModal();
+        renderMap();
+        renderInspector();
+        showToast('テーマ設定を保存しました');
+      });
+    }
+
+    function openDataIOModal() {
+      const jsonStr = JSON.stringify({ themes: state.themes, papers: state.papers, links: state.links }, null, 2);
+      openModal('JSONデータのエクスポート / インポート', `
+        <div class="space-y-3">
+          <p class="text-xs text-slate-600">現在の論文・引用関係マップをJSONとして保存したり、別のJSONを読み込んだりできます。</p>
+          <textarea id="jsonArea" rows="10" class="w-full p-3 text-[11px] font-mono bg-slate-50 border border-slate-300 rounded-xl">${escapeHtml(jsonStr)}</textarea>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <button id="btnResetSample" type="button" class="px-3 py-1.5 text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg">マップを空にリセット</button>
+            <div class="flex gap-2">
+              <button id="btnCopyJson" type="button" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg">コピー</button>
+              <button id="btnImportJson" type="button" class="px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg">このJSONを読み込む</button>
+            </div>
+          </div>
+        </div>
+      `);
+
+      document.getElementById('btnCopyJson').addEventListener('click', () => {
+        const ta = document.getElementById('jsonArea');
+        ta.select();
+        try {
+          navigator.clipboard?.writeText(ta.value).catch(() => document.execCommand('copy'));
+        } catch (e) {
+          document.execCommand('copy');
+        }
+        showToast('JSONをコピーしました');
+      });
+
+      document.getElementById('btnImportJson').addEventListener('click', () => {
+        try {
+          const parsed = JSON.parse(document.getElementById('jsonArea').value);
+          if (!Array.isArray(parsed.themes) || !Array.isArray(parsed.papers) || !Array.isArray(parsed.links)) {
+            throw new Error('themes, papers, links の配列が必要です');
+          }
+          state.themes = parsed.themes;
+          state.papers = parsed.papers;
+          state.links = parsed.links;
+          state.selectedPaperId = state.papers[0]?.id || null;
+          state.selectedLinkId = null;
+          saveState();
+          closeModal();
+          renderMap();
+          renderInspector();
+          showToast('JSONを読み込みました');
+        } catch (err) {
+          showToast(`JSON形式エラー: ${err.message}`);
+        }
+      });
+
+      document.getElementById('btnResetSample').addEventListener('click', () => {
+        const def = getDefaultData();
+        state.themes = def.themes;
+        state.papers = def.papers;
+        state.links = def.links;
+        state.selectedPaperId = null;
+        state.selectedLinkId = null;
+        saveState();
+        closeModal();
+        renderMap();
+        renderInspector();
+        showToast('マップを空の状態にリセットしました');
+      });
+    }
+
+    // =========================================================================
+    // Paperpile (BibTeX / JSON) Parsers & Import Modal
+    // =========================================================================
+    function cleanBibValue(val) {
+      return (val || '')
+        .replace(/\s+/g, ' ')
+        .replace(/[{}]/g, '')
+        .trim();
+    }
+
+    function makeShortAuthor(authorsStr) {
+      if (!authorsStr) return 'Unknown';
+      const parts = authorsStr.split(/\s+and\s+|\s*,\s*(?=[A-Z])/i).map(x => x.trim()).filter(Boolean);
+      const first = parts[0] || authorsStr;
+      // If "Last, First" format, take Last
+      const last = first.includes(',') ? first.split(',')[0].trim() : first.split(/\s+/).pop();
+      return parts.length > 1 ? `${last} et al.` : last;
+    }
+
+    function parseBibTeX(text) {
+      const entries = [];
+      let i = 0;
+      const len = text.length;
+      while (i < len) {
+        const atIdx = text.indexOf('@', i);
+        if (atIdx === -1) break;
+        const braceIdx = text.indexOf('{', atIdx);
+        if (braceIdx === -1) break;
+        const entryType = text.slice(atIdx + 1, braceIdx).trim().toLowerCase();
+        if (entryType === 'comment' || entryType === 'preamble' || entryType === 'string') {
+          i = braceIdx + 1;
+          continue;
+        }
+        // Find matching closing brace
+        let depth = 1;
+        let j = braceIdx + 1;
+        while (j < len && depth > 0) {
+          if (text[j] === '{') depth++;
+          else if (text[j] === '}') depth--;
+          j++;
+        }
+        const body = text.slice(braceIdx + 1, j - 1);
+        i = j;
+
+        const firstComma = body.indexOf(',');
+        if (firstComma === -1) continue;
+        const fieldsStr = body.slice(firstComma + 1);
+
+        // Parse key = value pairs
+        const fields = {};
+        let k = 0;
+        while (k < fieldsStr.length) {
+          while (k < fieldsStr.length && /[\s,]/.test(fieldsStr[k])) k++;
+          if (k >= fieldsStr.length) break;
+          const eqIdx = fieldsStr.indexOf('=', k);
+          if (eqIdx === -1) break;
+          const key = fieldsStr.slice(k, eqIdx).trim().toLowerCase();
+          k = eqIdx + 1;
+          while (k < fieldsStr.length && /\s/.test(fieldsStr[k])) k++;
+          let val = '';
+          if (fieldsStr[k] === '{') {
+            let d = 1;
+            k++;
+            const start = k;
+            while (k < fieldsStr.length && d > 0) {
+              if (fieldsStr[k] === '{') d++;
+              else if (fieldsStr[k] === '}') d--;
+              k++;
+            }
+            val = fieldsStr.slice(start, k - 1);
+          } else if (fieldsStr[k] === '"') {
+            k++;
+            const start = k;
+            while (k < fieldsStr.length && fieldsStr[k] !== '"') {
+              if (fieldsStr[k] === '\\') k++;
+              k++;
+            }
+            val = fieldsStr.slice(start, k);
+            k++;
+          } else {
+            const start = k;
+            while (k < fieldsStr.length && fieldsStr[k] !== ',') k++;
+            val = fieldsStr.slice(start, k);
+          }
+          fields[key] = cleanBibValue(val);
+        }
+
+        if (!fields.title) continue;
+        const rawAuthors = (fields.author || '').replace(/\s+and\s+/gi, ', ');
+        const yearNum = parseInt(fields.year, 10) || new Date().getFullYear();
+        const labelCandidate = (fields.keywords || '').split(/[,;]/)[0]?.trim() || '';
+
+        entries.push({
+          title: fields.title,
+          authors: rawAuthors,
+          shortAuthor: makeShortAuthor(fields.author || ''),
+          year: yearNum,
+          journal: fields.journal || fields.booktitle || '',
+          doi: (fields.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+          summary: '',
+          summaryEn: fields.abstract || '',
+          label: labelCandidate
+        });
+      }
+      return entries;
+    }
+
+    function parsePaperpileJSON(text) {
+      const data = JSON.parse(text);
+      const arr = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+      return arr.filter(item => item && item.title).map(item => {
+        const authorsArr = (item.author || []).map(a =>
+          a.formatted || [a.first, a.last].filter(Boolean).join(' ')
+        ).filter(Boolean);
+        const firstLast = item.author?.[0]?.last || authorsArr[0] || 'Unknown';
+        const shortAuthor = authorsArr.length > 1 ? `${firstLast} et al.` : firstLast;
+        const yearNum = Number(item.published?.year || item.year) || new Date().getFullYear();
+        const labelCandidate = (item.labelsNamed && item.labelsNamed[0]) || (item.foldersNamed && item.foldersNamed[0]) || '';
+
+        return {
+          title: item.title,
+          authors: authorsArr.join(', '),
+          shortAuthor,
+          year: yearNum,
+          journal: item.journal || item.journalfull || item.booktitle || '',
+          doi: (item.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+          summary: '',
+          summaryEn: item.abstract || '',
+          label: labelCandidate
+        };
+      });
+    }
+
+    function openPaperpileModal() {
+      const themeOptions = state.themes.map(t =>
+        `<option value="${t.id}">${escapeHtml(t.name)}</option>`
+      ).join('');
+
+      openModal('Paperpile（BibTeX / JSON）一括インポート', `
+        <div class="space-y-3 text-xs">
+          <div class="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 text-indigo-950 space-y-1">
+            <div class="font-bold">Paperpileからの取り込み手順</div>
+            <p class="text-[11px] leading-relaxed">
+              Paperpileでフォルダや論文を選択 → 「Export」から <strong>BibTeX (.bib)</strong> または <strong>JSON</strong> を書き出し、下のボタンからファイルを選択するかテキストを貼り付けてください。
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <label class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg cursor-pointer transition">
+              ファイルを選択 (.bib / .json)
+              <input id="ppFileInput" type="file" accept=".bib,.json,.txt" class="hidden" />
+            </label>
+            <span id="ppFileName" class="text-[11px] text-slate-500">未選択（下の欄に直接ペーストも可能）</span>
+          </div>
+
+          <textarea id="ppRawInput" rows="7" placeholder="@article{Maze2008, title={...}, author={...}, year={2008}, doi={10.1038/nature07279}} または Paperpile JSON配列を貼り付け..." class="w-full p-3 text-[11px] font-mono bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400"></textarea>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">取り込みモード</label>
+              <select id="ppMode" class="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white">
+                <option value="append">現在のマップに追加（重複はスキップ）</option>
+                <option value="replace">現在のマップを置き換える</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">デフォルトのテーマレーン</label>
+              <select id="ppDefaultTheme" class="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white">${themeOptions}</select>
+            </div>
+          </div>
+
+          <div class="space-y-1.5 pt-1">
+            <label class="flex items-center gap-2 cursor-pointer text-slate-700">
+              <input id="ppAutoThemes" type="checkbox" checked class="rounded border-slate-300 text-indigo-600" />
+              <span>Paperpileのラベル/フォルダ・キーワードから自動でテーマレーンを作成</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer text-slate-700">
+              <input id="ppAutoOpenAlex" type="checkbox" checked class="rounded border-slate-300 text-indigo-600" />
+              <span>取り込み後にOpenAlexから引用数取得＆論文間の引用線を自動結線する</span>
+            </label>
+          </div>
+
+          <div id="ppStatusMsg" class="text-[11px] font-medium text-slate-600 hidden"></div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <button type="button" id="btnCancelPp" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+            <button type="button" id="btnRunPpImport" class="px-4 py-1.5 font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">インポート実行</button>
+          </div>
+        </div>
+      `);
+
+      document.getElementById('btnCancelPp').addEventListener('click', closeModal);
+
+      document.getElementById('ppFileInput').addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        document.getElementById('ppFileName').textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          document.getElementById('ppRawInput').value = ev.target?.result || '';
+        };
+        reader.readAsText(file);
+      });
+
+      document.getElementById('btnRunPpImport').addEventListener('click', async () => {
+        const raw = document.getElementById('ppRawInput').value.trim();
+        const statusEl = document.getElementById('ppStatusMsg');
+        if (!raw) {
+          showToast('BibTeXまたはJSONデータを入力してください');
+          return;
+        }
+
+        let parsedItems = [];
+        try {
+          if (raw.startsWith('[') || raw.startsWith('{')) {
+            parsedItems = parsePaperpileJSON(raw);
+          } else {
+            parsedItems = parseBibTeX(raw);
+          }
+        } catch (err) {
+          statusEl.textContent = `解析エラー: ${err.message}`;
+          statusEl.className = 'text-[11px] font-medium text-rose-600';
+          return;
+        }
+
+        if (parsedItems.length === 0) {
+          statusEl.textContent = '論文データを検出できませんでした。BibTeX (@article{...}) または Paperpile JSON を確認してください。';
+          statusEl.className = 'text-[11px] font-medium text-rose-600';
+          return;
+        }
+
+        const mode = document.getElementById('ppMode').value;
+        const defaultThemeId = document.getElementById('ppDefaultTheme').value;
+        const autoThemes = document.getElementById('ppAutoThemes').checked;
+        const autoOpenAlex = document.getElementById('ppAutoOpenAlex').checked;
+
+        if (mode === 'replace') {
+          state.papers = [];
+          state.links = [];
+          if (autoThemes) {
+            state.themes = [];
+          }
+        }
+
+        const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+        let added = 0;
+
+        parsedItems.forEach(item => {
+          const normDoi = (item.doi || '').toLowerCase();
+          const normTitle = item.title.toLowerCase();
+          const exists = state.papers.some(p =>
+            (normDoi && (p.doi || '').toLowerCase() === normDoi) ||
+            p.title.toLowerCase() === normTitle
+          );
+          if (exists) return;
+
+          let themeId = defaultThemeId;
+          if (autoThemes && item.label) {
+            let foundTheme = state.themes.find(t => t.name.toLowerCase() === item.label.toLowerCase());
+            if (!foundTheme) {
+              foundTheme = {
+                id: uid('theme'),
+                name: item.label,
+                color: palette[state.themes.length % palette.length]
+              };
+              state.themes.push(foundTheme);
+            }
+            themeId = foundTheme.id;
+          }
+          if (state.themes.length === 0) {
+            state.themes.push({ id: 'general', name: '一般・未分類', color: '#6366f1' });
+            themeId = 'general';
+          }
+
+          state.papers.push({
+            id: uid('paper'),
+            title: item.title,
+            authors: item.authors,
+            shortAuthor: item.shortAuthor,
+            year: item.year,
+            journal: item.journal,
+            doi: item.doi,
+            themeId: themeId || state.themes[0].id,
+            citations: 0,
+            summary: item.summary,
+            summaryEn: item.summaryEn,
+            xOffset: 0
+          });
+          added++;
+        });
+
+        state.selectedPaperId = state.papers[0]?.id || null;
+        state.selectedLinkId = null;
+        saveState();
+        renderMap();
+        renderInspector();
+
+        if (autoOpenAlex && added > 0) {
+          statusEl.textContent = `${added}件を取り込みました。OpenAlexから引用数と引用関係を同期中...`;
+          statusEl.className = 'text-[11px] font-medium text-indigo-700';
+          await syncWithOpenAlex({ autoLink: true });
+        } else {
+          showToast(`${added}件の論文をPaperpileデータから取り込みました`);
+        }
+        closeModal();
+      });
+    }
+
+    // =========================================================================
+    // Live OpenAlex Citation Count Refresh & Auto-Linking
+    // =========================================================================
+    function reconstructAbstract(invertedIndex) {
+      if (!invertedIndex || typeof invertedIndex !== 'object') return '';
+      const words = [];
+      Object.entries(invertedIndex).forEach(([word, positions]) => {
+        if (Array.isArray(positions)) {
+          positions.forEach(pos => { words[pos] = word; });
+        }
+      });
+      return words.filter(Boolean).join(' ');
+    }
+
+    async function syncWithOpenAlex({ autoLink = true } = {}) {
+      if (state.papers.length === 0) {
+        showToast('論文が登録されていません');
+        return;
+      }
+      showToast('OpenAlexから引用数と引用関係を同期中...');
+      let updated = 0;
+
+      for (const p of state.papers) {
+        try {
+          let data = null;
+          if (p.doi && p.doi.trim()) {
+            const cleanDoi = p.doi.trim().replace(/^https?:\/\/doi\.org\//i, '');
+            const resp = await fetch(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`);
+            if (resp.ok) data = await resp.json();
+          } else if (p.title && p.title.trim()) {
+            const resp = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(p.title)}&per-page=1`);
+            if (resp.ok) {
+              const resJson = await resp.json();
+              data = resJson.results?.[0] || null;
+            }
+          }
+
+          if (data) {
+            if (typeof data.cited_by_count === 'number') {
+              p.citations = data.cited_by_count;
+            }
+            if (data.id) p.openAlexId = data.id;
+            if (Array.isArray(data.referenced_works)) {
+              p._referencedWorks = data.referenced_works;
+            }
+            if (!p.doi && data.doi) {
+              p.doi = data.doi.replace(/^https?:\/\/doi\.org\//i, '');
+            }
+            if (!p.summaryEn && data.abstract_inverted_index) {
+              p.summaryEn = reconstructAbstract(data.abstract_inverted_index);
+            }
+            if (Array.isArray(data.topics) && data.topics.length > 0) {
+              p.oaTopics = data.topics.slice(0, 4).map(t => t.display_name).filter(Boolean);
+            }
+            if (Array.isArray(data.concepts) && data.concepts.length > 0) {
+              p.oaConcepts = data.concepts.slice(0, 5).map(c => c.display_name).filter(Boolean);
+            }
+            updated++;
+          }
+        } catch (e) {
+          // Continue other papers
+        }
+      }
+
+      let newLinks = 0;
+      if (autoLink) {
+        const oaToPaperId = {};
+        state.papers.forEach(p => {
+          if (p.openAlexId) oaToPaperId[p.openAlexId] = p.id;
+        });
+
+        state.papers.forEach(citingPaper => {
+          const refs = citingPaper._referencedWorks || [];
+          refs.forEach(refOaId => {
+            const citedPaperId = oaToPaperId[refOaId];
+            if (!citedPaperId || citedPaperId === citingPaper.id) return;
+            const alreadyExists = state.links.some(l => l.sourceId === citedPaperId && l.targetId === citingPaper.id);
+            if (!alreadyExists) {
+              state.links.push({
+                id: uid('lnk'),
+                sourceId: citedPaperId,
+                targetId: citingPaper.id,
+                intent: 'background',
+                section: 'References (OpenAlex自動検出)',
+                quote: '',
+                quoteJa: '',
+                note: 'OpenAlexの参考文献リストから引用関係を自動検出しました。編集ボタンから本文中の引用文言を追記できます。'
+              });
+              newLinks++;
+            }
+          });
+        });
+      }
+
+      if (updated > 0 || newLinks > 0) {
+        saveState();
+        renderMap();
+        renderInspector();
+        showToast(`OpenAlex同期完了: 引用数 ${updated}件更新 ／ 新規引用線 ${newLinks}本を自動結線`);
+      } else {
+        showToast('OpenAlexから新しい情報を取得できませんでした');
+      }
+    }
+
+    // =========================================================================
+    // Auto-Suggest & Classify Horizontal Axis (Themes)
+    // =========================================================================
+    function buildClassificationProposal(mode) {
+      const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'];
+      const getSearchText = (p) => [
+        p.title, p.summary, p.summaryEn, p.journal,
+        ...(p.oaTopics || []), ...(p.oaConcepts || [])
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      if (mode === 'openalex') {
+        // Group by OpenAlex primary topic or fallback keyword extraction
+        const groups = {};
+        const stopwords = new Set(['with', 'from', 'using', 'based', 'single', 'diamond', 'center', 'centers', 'quantum', 'magnetic', 'field', 'fields', 'nitrogen', 'vacancy', 'under', 'room', 'temperature', 'high', 'study', 'analysis', 'review', 'nanoscale', 'sensing']);
+        state.papers.forEach(p => {
+          let label = (p.oaTopics && p.oaTopics[0]) || '';
+          if (!label) {
+            const words = (p.title || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/)
+              .filter(w => w.length >= 4 && !stopwords.has(w));
+            label = words[0] ? words[0].charAt(0).toUpperCase() + words[0].slice(1) + ' 関連' : '一般・基礎';
+          }
+          if (!groups[label]) groups[label] = [];
+          groups[label].push(p.id);
+        });
+
+        // Merge singleton groups if too many (> 6)
+        const entries = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+        const finalThemes = [];
+        const assignments = {};
+        const maxBuckets = 5;
+        entries.forEach(([name, ids], idx) => {
+          if (idx < maxBuckets) {
+            const tid = uid('theme');
+            finalThemes.push({ id: tid, name, color: palette[idx % palette.length] });
+            ids.forEach(pid => { assignments[pid] = tid; });
+          } else {
+            let otherTheme = finalThemes.find(t => t.name === 'その他・関連研究');
+            if (!otherTheme) {
+              otherTheme = { id: uid('theme'), name: 'その他・関連研究', color: palette[maxBuckets % palette.length] };
+              finalThemes.push(otherTheme);
+            }
+            ids.forEach(pid => { assignments[pid] = otherTheme.id; });
+          }
+        });
+        return { themes: finalThemes, assignments };
+      }
+
+      const ruleSets = {
+        tech: [
+          { name: 'レビュー・感度理論', color: '#f59e0b', keywords: ['review', 'optimization', 'sensitivity', 'limit', 'theoretical', 'framework', 'レビュー', '理論', '感度限界', '最適化'] },
+          { name: 'マイクロ波・共振器・回路', color: '#ec4899', keywords: ['microwave', 'resonator', 'antenna', 'coplanar', 'waveguide', 'hfss', 'vna', 's11', 'マイクロ波', '共振器', 'アンテナ'] },
+          { name: 'パルス制御・動的デカップリング', color: '#10b981', keywords: ['coherent', 'rabi', 'echo', 'ramsey', 'dynamical decoupling', 'pulse', 'oscillation', 'sequence', 'ラビ', 'エコー', 'コヒーレント', 'パルス'] },
+          { name: '光学系・走査プローブ・読み出し', color: '#0ea5e9', keywords: ['confocal', 'optical', 'fluorescence', 'imaging', 'scanning', 'afm', 'readout', 'odmr', '共焦点', '光学', 'イメージング', '走査'] },
+          { name: '材料・欠陥・基礎スピン', color: '#6366f1', keywords: ['defect', 'implantation', 'anneal', 'isotopically', 'nanocrystal', 'electronic spin', '材料', '欠陥', '基礎'] }
+        ],
+        target: [
+          { name: 'レビュー・理論体系化', color: '#f59e0b', keywords: ['review', 'optimization', 'theoretical', 'framework', 'レビュー', '体系', '理論'] },
+          { name: '単一スピン・ナノ磁気計測', color: '#0ea5e9', keywords: ['individual', 'single', 'nanoscale', 'nanometre', '3 nt', '単一', 'ナノ'] },
+          { name: 'アンサンブル・高感度磁力計', color: '#10b981', keywords: ['ensemble', 'femtotesla', 'broadband', 'high-sensitivity', 'アンサンブル', '高感度'] },
+          { name: '走査イメージング・生体/物性応用', color: '#ec4899', keywords: ['imaging', 'mapping', 'biological', 'cell', 'ambient', 'イメージング', '生体', '細胞'] },
+          { name: 'スピン制御・基礎物理', color: '#6366f1', keywords: ['coherent', 'rabi', 'oscillation', 'confocal', 'odmr', '基礎', 'コヒーレント'] }
+        ]
+      };
+
+      const rules = ruleSets[mode] || ruleSets.tech;
+      const assignments = {};
+      const usedRuleIndices = new Set();
+
+      state.papers.forEach(p => {
+        const text = getSearchText(p);
+        let bestIdx = -1;
+        let bestScore = 0;
+        rules.forEach((r, idx) => {
+          let score = 0;
+          r.keywords.forEach(kw => {
+            if (text.includes(kw)) score += (p.title.toLowerCase().includes(kw) ? 2 : 1);
+          });
+          if (score > bestScore) {
+            bestScore = score;
+            bestIdx = idx;
+          }
+        });
+        if (bestIdx === -1) bestIdx = rules.length - 1;
+        usedRuleIndices.add(bestIdx);
+        assignments[p.id] = `prop_${bestIdx}`;
+      });
+
+      const finalThemes = [];
+      const idRemap = {};
+      Array.from(usedRuleIndices).sort((a, b) => a - b).forEach((rIdx, i) => {
+        const tid = uid('theme');
+        idRemap[`prop_${rIdx}`] = tid;
+        finalThemes.push({ id: tid, name: rules[rIdx].name, color: rules[rIdx].color || palette[i % palette.length] });
+      });
+
+      Object.keys(assignments).forEach(pid => {
+        assignments[pid] = idRemap[assignments[pid]];
+      });
+
+      return { themes: finalThemes, assignments };
+    }
+
+    function openAutoClassifyModal() {
+      if (state.papers.length === 0) {
+        showToast('分類する論文がまだ登録されていません');
+        return;
+      }
+
+      let currentMode = 'tech';
+      let proposal = buildClassificationProposal(currentMode);
+
+      const renderProposalBody = () => {
+        const hasOaTopics = state.papers.some(p => p.oaTopics && p.oaTopics.length > 0);
+        return `
+          <div class="space-y-3 text-xs">
+            <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 space-y-1.5">
+              <div class="font-bold">分類の切り口を選択してプレビュー</div>
+              <div class="flex flex-wrap gap-1.5">
+                <button type="button" data-prop-mode="tech" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'tech' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">技術要素・手法で分ける</button>
+                <button type="button" data-prop-mode="target" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'target' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">計測対象・応用で分ける</button>
+                <button type="button" data-prop-mode="openalex" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'openalex' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">OpenAlexトピック・キーワード</button>
+              </div>
+              ${!hasOaTopics ? `
+                <div class="flex items-center justify-between pt-1 text-[11px] text-emerald-800">
+                  <span>OpenAlexの公式トピックを取得すると精度が上がります</span>
+                  <button type="button" id="btnFetchTopicsInModal" class="px-2 py-0.5 bg-white border border-emerald-300 rounded font-semibold hover:bg-emerald-100">トピック取得</button>
+                </div>` : ''}
+            </div>
+
+            <div class="space-y-2.5 max-h-[48vh] overflow-y-auto pr-1">
+              ${proposal.themes.map((t, tIdx) => {
+                const papersInLane = state.papers.filter(p => proposal.assignments[p.id] === t.id);
+                return `
+                  <div class="p-2.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-3 h-3 rounded-full shrink-0" style="background:${escapeHtml(t.color)}"></span>
+                      <input type="text" data-prop-tname="${tIdx}" value="${escapeHtml(t.name)}" class="flex-1 px-2 py-1 text-xs font-bold bg-white border border-slate-300 rounded-lg" />
+                      <span class="text-[11px] text-slate-500 font-semibold">${papersInLane.length}件</span>
+                    </div>
+                    <div class="space-y-1 pl-4">
+                      ${papersInLane.map(p => `
+                        <div class="flex items-center justify-between gap-2 bg-white px-2 py-1 rounded border border-slate-200/80">
+                          <span class="truncate text-[11px] text-slate-800" title="${escapeHtml(p.title)}">[${p.year}] ${escapeHtml(p.shortAuthor)} — ${escapeHtml(p.title)}</span>
+                          <select data-prop-assign="${p.id}" class="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-slate-50 shrink-0 max-w-[140px]">
+                            ${proposal.themes.map(opt => `<option value="${opt.id}" ${opt.id === t.id ? 'selected' : ''}>${escapeHtml(opt.name)}</option>`).join('')}
+                          </select>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>`;
+              }).join('')}
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+              <button type="button" id="btnCancelAutoProp" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+              <button type="button" id="btnApplyAutoProp" class="px-4 py-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">この分類案を適用する</button>
+            </div>
+          </div>
+        `;
+      };
+
+      const mount = () => {
+        openModal('横軸（分野・テーマ）の自動提案・振り分け', renderProposalBody());
+
+        document.querySelectorAll('[data-prop-mode]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            currentMode = btn.getAttribute('data-prop-mode');
+            proposal = buildClassificationProposal(currentMode);
+            mount();
+          });
+        });
+
+        document.getElementById('btnFetchTopicsInModal')?.addEventListener('click', async () => {
+          await syncWithOpenAlex({ autoLink: false });
+          currentMode = 'openalex';
+          proposal = buildClassificationProposal('openalex');
+          mount();
+        });
+
+        document.querySelectorAll('[data-prop-tname]').forEach(inp => {
+          inp.addEventListener('input', () => {
+            const idx = Number(inp.getAttribute('data-prop-tname'));
+            if (proposal.themes[idx]) proposal.themes[idx].name = inp.value;
+          });
+        });
+
+        document.querySelectorAll('[data-prop-assign]').forEach(sel => {
+          sel.addEventListener('change', () => {
+            const pid = sel.getAttribute('data-prop-assign');
+            proposal.assignments[pid] = sel.value;
+            mount();
+          });
+        });
+
+        document.getElementById('btnCancelAutoProp').addEventListener('click', closeModal);
+        document.getElementById('btnApplyAutoProp').addEventListener('click', () => {
+          // Remove empty proposed themes
+          const nonEmptyThemes = proposal.themes.filter(t =>
+            state.papers.some(p => proposal.assignments[p.id] === t.id)
+          );
+          if (nonEmptyThemes.length === 0) return;
+          state.themes = nonEmptyThemes.map(t => ({ ...t, name: t.name.trim() || 'テーマ' }));
+          state.papers.forEach(p => {
+            p.themeId = proposal.assignments[p.id] || state.themes[0].id;
+            p.xOffset = 0;
+          });
+          saveState();
+          closeModal();
+          renderMap();
+          renderInspector();
+          showToast(`${state.themes.length}つのテーマレーンへ自動振り分けしました`);
+        });
+      };
+
+      mount();
+    }
+
+    // =========================================================================
+    // Expand Map from Selected Paper (Fetch Cited-By / References via OpenAlex)
+    // =========================================================================
+    async function ensurePaperOpenAlexData(p) {
+      if (p.openAlexId && Array.isArray(p._referencedWorks)) return true;
+      try {
+        let data = null;
+        if (p.doi && p.doi.trim()) {
+          const cleanDoi = p.doi.trim().replace(/^https?:\/\/doi\.org\//i, '');
+          const resp = await fetch(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`);
+          if (resp.ok) data = await resp.json();
+        } else if (p.title && p.title.trim()) {
+          const resp = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(p.title)}&per-page=1`);
+          if (resp.ok) {
+            const j = await resp.json();
+            data = j.results?.[0] || null;
+          }
+        }
+        if (data) {
+          if (data.id) p.openAlexId = data.id;
+          if (typeof data.cited_by_count === 'number') p.citations = data.cited_by_count;
+          if (Array.isArray(data.referenced_works)) p._referencedWorks = data.referenced_works;
+          if (Array.isArray(data.topics)) p.oaTopics = data.topics.slice(0, 4).map(t => t.display_name).filter(Boolean);
+          if (Array.isArray(data.concepts)) p.oaConcepts = data.concepts.slice(0, 5).map(c => c.display_name).filter(Boolean);
+          return true;
+        }
+      } catch (e) {
+        return false;
+      }
+      return false;
+    }
+
+    async function openExpandPaperModal(paper, direction) {
+      const isCitedBy = direction === 'citedBy';
+      const title = isCitedBy
+        ? `「${paper.shortAuthor} (${paper.year})」を引用している論文を取得`
+        : `「${paper.shortAuthor} (${paper.year})」が引用している論文を取得`;
+
+      openModal(title, `
+        <div id="expandLoading" class="py-8 text-center text-xs text-slate-500 space-y-2">
+          <div class="font-semibold text-slate-700">OpenAlexから関連論文を取得しています...</div>
+          <div class="text-[11px]">被引用数の多い順に候補を取得します</div>
+        </div>
+      `);
+
+      const ok = await ensurePaperOpenAlexData(paper);
+      if (!ok || !paper.openAlexId) {
+        document.getElementById('modalBody').innerHTML = `
+          <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+            OpenAlexからこの論文のデータを取得できませんでした。DOIまたはタイトルが正しいか確認してください。
+          </div>`;
+        return;
+      }
+
+      let candidates = [];
+      try {
+        const shortId = paper.openAlexId.replace('https://openalex.org/', '');
+        if (isCitedBy) {
+          const resp = await fetch(`https://api.openalex.org/works?filter=cites:${encodeURIComponent(shortId)}&sort=cited_by_count:desc&per-page=15`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          candidates = data.results || [];
+        } else {
+          const refs = (paper._referencedWorks || []).slice(0, 20).map(id => id.replace('https://openalex.org/', ''));
+          if (refs.length === 0) {
+            document.getElementById('modalBody').innerHTML = `
+              <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                この論文の参考文献リストがOpenAlexに登録されていませんでした。
+              </div>`;
+            return;
+          }
+          const resp = await fetch(`https://api.openalex.org/works?filter=openalex_id:${refs.join('|')}&sort=cited_by_count:desc&per-page=20`);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          candidates = data.results || [];
+        }
+      } catch (err) {
+        document.getElementById('modalBody').innerHTML = `
+          <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+            関連論文の取得に失敗しました (${escapeHtml(err.message)})。
+          </div>`;
+        return;
+      }
+
+      candidates = candidates.filter(w => w && w.title);
+      if (candidates.length === 0) {
+        document.getElementById('modalBody').innerHTML = `
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+            該当する関連論文が見つかりませんでした。
+          </div>`;
+        return;
+      }
+
+      const findExisting = (w) => {
+        const wDoi = (w.doi || '').replace(/^https?:\/\/doi\.org\//i, '').toLowerCase();
+        const wTitle = (w.title || '').toLowerCase();
+        return state.papers.find(p =>
+          (w.id && p.openAlexId === w.id) ||
+          (wDoi && (p.doi || '').toLowerCase() === wDoi) ||
+          p.title.toLowerCase() === wTitle
+        );
+      };
+
+      const themeOpts = state.themes.map(t =>
+        `<option value="${t.id}" ${t.id === paper.themeId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
+      ).join('');
+
+      let newPrechecked = 0;
+      document.getElementById('modalBody').innerHTML = `
+        <div class="space-y-3 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+            <span class="font-semibold text-slate-700">上位 ${candidates.length}件（引用数順）</span>
+            <div class="flex items-center gap-2">
+              <label class="text-[11px] text-slate-600">配置先レーン:</label>
+              <select id="expandTargetTheme" class="px-2 py-1 text-[11px] border border-slate-300 rounded-lg bg-white">${themeOpts}</select>
+            </div>
+          </div>
+
+          <div class="space-y-1.5 max-h-[48vh] overflow-y-auto pr-1">
+            ${candidates.map((w, idx) => {
+              const existingP = findExisting(w);
+              const firstA = w.authorships?.[0]?.author?.display_name || 'Unknown';
+              const shortA = w.authorships?.length > 1 ? `${firstA} et al.` : firstA;
+              const shouldCheck = !existingP && newPrechecked < 5;
+              if (shouldCheck) newPrechecked++;
+              return `
+                <label class="flex items-start gap-2.5 p-2.5 rounded-xl border border-slate-200 hover:border-amber-400 cursor-pointer bg-white transition">
+                  <input type="checkbox" data-exp-idx="${idx}" ${shouldCheck ? 'checked' : ''} class="mt-0.5 rounded border-slate-300 text-amber-500" />
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-bold text-slate-900 line-clamp-1">${escapeHtml(w.title)}</span>
+                      <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${existingP ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}">
+                        ${existingP ? '登録済(線のみ追加)' : '新規'}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">
+                      ${escapeHtml(shortA)} (${w.publication_year || '?'}) · 引用 ${Number(w.cited_by_count || 0).toLocaleString()} · ${escapeHtml(w.primary_location?.source?.display_name || '')}
+                    </div>
+                  </div>
+                </label>`;
+            }).join('')}
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <button type="button" id="btnCancelExpand" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+            <button type="button" id="btnApplyExpand" class="px-4 py-1.5 font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg">選択した論文を追加＆結線</button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('btnCancelExpand').addEventListener('click', closeModal);
+      document.getElementById('btnApplyExpand').addEventListener('click', () => {
+        const targetThemeId = document.getElementById('expandTargetTheme').value;
+        const checked = Array.from(document.querySelectorAll('[data-exp-idx]:checked'))
+          .map(cb => candidates[Number(cb.getAttribute('data-exp-idx'))]);
+
+        if (checked.length === 0) {
+          showToast('追加する論文を1つ以上選択してください');
+          return;
+        }
+
+        let addedPapers = 0;
+        let addedLinks = 0;
+
+        checked.forEach(w => {
+          let targetPaper = findExisting(w);
+          if (!targetPaper) {
+            const authorsList = (w.authorships || []).map(a => a.author?.display_name).filter(Boolean);
+            const firstA = authorsList[0] || 'Unknown';
+            targetPaper = {
+              id: uid('paper'),
+              title: w.title,
+              authors: authorsList.join(', '),
+              shortAuthor: authorsList.length > 1 ? `${firstA} et al.` : firstA,
+              year: w.publication_year || paper.year,
+              journal: w.primary_location?.source?.display_name || '',
+              doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
+              themeId: targetThemeId,
+              citations: w.cited_by_count || 0,
+              summary: '',
+              summaryEn: reconstructAbstract(w.abstract_inverted_index),
+              openAlexId: w.id || '',
+              _referencedWorks: w.referenced_works || [],
+              oaTopics: (w.topics || []).slice(0, 4).map(t => t.display_name).filter(Boolean),
+              oaConcepts: (w.concepts || []).slice(0, 5).map(c => c.display_name).filter(Boolean),
+              xOffset: 0
+            };
+            state.papers.push(targetPaper);
+            addedPapers++;
+          }
+
+          const sourceId = isCitedBy ? paper.id : targetPaper.id;
+          const targetId = isCitedBy ? targetPaper.id : paper.id;
+          const linkExists = state.links.some(l => l.sourceId === sourceId && l.targetId === targetId);
+          if (!linkExists && sourceId !== targetId) {
+            state.links.push({
+              id: uid('lnk'),
+              sourceId,
+              targetId,
+              intent: 'background',
+              section: 'References (OpenAlex自動取得)',
+              quote: '',
+              quoteJa: '',
+              note: 'OpenAlexの引用ネットワークから自動追加されました。編集ボタンから本文中の引用文言を追記できます。'
+            });
+            addedLinks++;
+          }
+        });
+
+        saveState();
+        closeModal();
+        renderMap();
+        renderInspector();
+        showToast(`論文 ${addedPapers}件・引用線 ${addedLinks}本を追加しました`);
+      });
+    }
+
+    // =========================================================================
+    // Google Sheets (GAS) Auto-Sync
+    // =========================================================================
+    const SYNC_STORAGE_KEY = 'citemap_cloud_sync_v1';
+    let syncConfig = {
+      gasUrl: '',
+      token: '',
+      autoLoad: true,
+      autoSave: true
+    };
+    let _cloudPushTimer = null;
+
+    function setSyncDot(status) {
+      const dot = document.getElementById('cloudSyncDot');
+      if (!dot) return;
+      const map = {
+        idle: 'bg-slate-300',
+        syncing: 'bg-amber-400 animate-pulse',
+        ok: 'bg-emerald-500',
+        error: 'bg-rose-500'
+      };
+      dot.className = `w-2 h-2 rounded-full ${map[status] || map.idle}`;
+    }
+
+    function loadSyncConfig() {
+      try {
+        const raw = localStorage.getItem(SYNC_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            syncConfig = { ...syncConfig, ...parsed };
+          }
+        }
+        // Support #sync=...&token=... hash for 1-click iPhone/iPad setup
+        if (window.location.hash && window.location.hash.includes('sync=')) {
+          const params = new URLSearchParams(window.location.hash.slice(1));
+          const u = params.get('sync');
+          if (u) {
+            syncConfig.gasUrl = u;
+            syncConfig.token = params.get('token') || '';
+            syncConfig.autoLoad = true;
+            syncConfig.autoSave = true;
+            saveSyncConfig();
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+          }
+        }
+      } catch (e) {}
+      setSyncDot(syncConfig.gasUrl ? 'ok' : 'idle');
+    }
+
+    function saveSyncConfig() {
+      try {
+        localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(syncConfig));
+      } catch (e) {}
+    }
+
+    function scheduleCloudPush() {
+      if (!syncConfig.gasUrl || !syncConfig.autoSave) return;
+      clearTimeout(_cloudPushTimer);
+      setSyncDot('syncing');
+      _cloudPushTimer = setTimeout(() => {
+        pushToGoogleSheets({ silent: true });
+      }, 1500);
+    }
+
+    async function pushToGoogleSheets({ silent = false } = {}) {
+      if (!syncConfig.gasUrl) {
+        if (!silent) showToast('GAS WebアプリURLを設定してください');
+        return false;
+      }
+      setSyncDot('syncing');
+      try {
+        const payload = {
+          token: syncConfig.token || '',
+          updatedAt: new Date().toISOString(),
+          data: {
+            themes: state.themes,
+            papers: state.papers,
+            links: state.links
+          }
+        };
+        const resp = await fetch(syncConfig.gasUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const res = await resp.json();
+        if (res.status !== 'ok') throw new Error(res.message || 'Sync error');
+        setSyncDot('ok');
+        if (!silent) showToast('Googleスプレッドシートへ保存しました');
+        return true;
+      } catch (err) {
+        setSyncDot('error');
+        if (!silent) showToast(`保存に失敗しました: ${err.message}`);
+        return false;
+      }
+    }
+
+    async function pullFromGoogleSheets({ silent = false } = {}) {
+      if (!syncConfig.gasUrl) {
+        if (!silent) showToast('GAS WebアプリURLを設定してください');
+        return false;
+      }
+      setSyncDot('syncing');
+      try {
+        const url = new URL(syncConfig.gasUrl);
+        if (syncConfig.token) url.searchParams.set('token', syncConfig.token);
+        const resp = await fetch(url.toString());
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const res = await resp.json();
+        if (res.status !== 'ok') throw new Error(res.message || 'Read error');
+        if (res.data && Array.isArray(res.data.themes) && Array.isArray(res.data.papers) && Array.isArray(res.data.links)) {
+          state.themes = res.data.themes;
+          state.papers = res.data.papers;
+          state.links = res.data.links;
+          state.selectedPaperId = state.papers[0]?.id || null;
+          state.selectedLinkId = null;
+          saveState({ skipCloud: true });
+          renderMap();
+          renderInspector();
+        }
+        setSyncDot('ok');
+        if (!silent) showToast('Googleスプレッドシートから最新データを読み込みました');
+        return true;
+      } catch (err) {
+        setSyncDot('error');
+        if (!silent) showToast(`読み込みに失敗しました: ${err.message}`);
+        return false;
+      }
+    }
+
+    const GAS_TEMPLATE_CODE = `// Googleスプレッドシートの「拡張機能 > Apps Script」に貼り付けて「デプロイ > 新しいデプロイ > ウェブアプリ」で公開してください
+// アクセスできるユーザー: 「全員」 / 実行するユーザー: 「自分」
+const SECRET_TOKEN = ''; // 必要なら合言葉を設定（空欄でも可）
+
+function getSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return ss.getSheetByName('CiteMapData') || ss.insertSheet('CiteMapData');
+}
+
+function doGet(e) {
+  const token = (e && e.parameter && e.parameter.token) || '';
+  if (SECRET_TOKEN && token !== SECRET_TOKEN) {
+    return jsonOut_({ status: 'error', message: 'Invalid token' });
+  }
+  const raw = getSheet_().getRange('A1').getValue();
+  const data = raw ? JSON.parse(raw) : null;
+  return jsonOut_({ status: 'ok', data });
+}
+
+function doPost(e) {
+  const body = JSON.parse(e.postData.contents || '{}');
+  if (SECRET_TOKEN && body.token !== SECRET_TOKEN) {
+    return jsonOut_({ status: 'error', message: 'Invalid token' });
+  }
+  const sheet = getSheet_();
+  sheet.getRange('A1').setValue(JSON.stringify(body.data || {}));
+  sheet.getRange('A2').setValue('Updated: ' + (body.updatedAt || new Date().toISOString()));
+  return jsonOut_({ status: 'ok' });
+}
+
+function jsonOut_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
+    function openCloudSyncModal() {
+      openModal('Googleスプレッドシート自動同期設定', `
+        <div class="space-y-3 text-xs">
+          <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 space-y-1">
+            <div class="font-bold">PC・iPhone・iPadで同じデータを自動共有</div>
+            <p class="text-[11px] leading-relaxed">
+              自分のGoogleスプレッドシートに下のApps ScriptをデプロイしてURLを設定すると、編集内容が自動で保存・同期されます。
+            </p>
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Google Apps Script ウェブアプリURL</label>
+              <input id="syncGasUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeHtml(syncConfig.gasUrl)}" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono text-[11px]" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">合言葉トークン（任意・GAS側と一致させる）</label>
+              <input id="syncToken" type="text" placeholder="空欄または任意の文字列" value="${escapeHtml(syncConfig.token)}" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs" />
+            </div>
+            <div class="flex flex-wrap gap-4 pt-1">
+              <label class="flex items-center gap-1.5 cursor-pointer text-slate-700">
+                <input id="syncAutoLoad" type="checkbox" ${syncConfig.autoLoad ? 'checked' : ''} class="rounded border-slate-300 text-emerald-600" />
+                <span>起動時に自動読み込み</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer text-slate-700">
+                <input id="syncAutoSave" type="checkbox" ${syncConfig.autoSave ? 'checked' : ''} class="rounded border-slate-300 text-emerald-600" />
+                <span>変更時に自動保存</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 pt-1">
+            <button type="button" id="btnSaveSyncCfg" class="px-3 py-1.5 font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg">設定を保存</button>
+            <button type="button" id="btnSyncPull" class="px-3 py-1.5 font-semibold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-lg">今すぐ読み込み</button>
+            <button type="button" id="btnSyncPush" class="px-3 py-1.5 font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg">今すぐ保存</button>
+            <button type="button" id="btnCopyMobileLink" class="px-3 py-1.5 font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg">iPhone/iPad設定用URLをコピー</button>
+          </div>
+
+          <details class="pt-2 border-t border-slate-200">
+            <summary class="cursor-pointer font-bold text-slate-700 hover:text-slate-900">Google Apps Script コードを表示（初回セットアップ用）</summary>
+            <div class="mt-2 space-y-2">
+              <pre id="gasCodePre" class="p-3 rounded-xl bg-slate-900 text-slate-100 text-[10px] font-mono overflow-x-auto leading-relaxed">${escapeHtml(GAS_TEMPLATE_CODE)}</pre>
+              <button type="button" id="btnCopyGasCode" class="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg">GASコードをコピー</button>
+            </div>
+          </details>
+        </div>
+      `);
+
+      const readInputs = () => {
+        syncConfig.gasUrl = document.getElementById('syncGasUrl').value.trim();
+        syncConfig.token = document.getElementById('syncToken').value.trim();
+        syncConfig.autoLoad = document.getElementById('syncAutoLoad').checked;
+        syncConfig.autoSave = document.getElementById('syncAutoSave').checked;
+        saveSyncConfig();
+        setSyncDot(syncConfig.gasUrl ? 'ok' : 'idle');
+      };
+
+      document.getElementById('btnSaveSyncCfg').addEventListener('click', () => {
+        readInputs();
+        showToast('同期設定を保存しました');
+      });
+      document.getElementById('btnSyncPull').addEventListener('click', async () => {
+        readInputs();
+        await pullFromGoogleSheets({ silent: false });
+      });
+      document.getElementById('btnSyncPush').addEventListener('click', async () => {
+        readInputs();
+        await pushToGoogleSheets({ silent: false });
+      });
+      document.getElementById('btnCopyMobileLink').addEventListener('click', () => {
+        readInputs();
+        if (!syncConfig.gasUrl) {
+          showToast('先にGAS WebアプリURLを入力してください');
+          return;
+        }
+        const base = window.location.href.split('#')[0];
+        const params = new URLSearchParams({ sync: syncConfig.gasUrl });
+        if (syncConfig.token) params.set('token', syncConfig.token);
+        const shareUrl = `${base}#${params.toString()}`;
+        try {
+          navigator.clipboard?.writeText(shareUrl).catch(() => {});
+        } catch (e) {}
+        showToast('iPhone/iPad設定用URLをコピーしました');
+      });
+      document.getElementById('btnCopyGasCode').addEventListener('click', () => {
+        try {
+          navigator.clipboard?.writeText(GAS_TEMPLATE_CODE).catch(() => {});
+        } catch (e) {}
+        showToast('Apps Scriptコードをコピーしました');
+      });
+    }
+
+    // =========================================================================
+    // Event Wiring & Boot
+    // =========================================================================
+    document.addEventListener('DOMContentLoaded', () => {
+      loadSyncConfig();
+      loadState();
+      updateDocLangButtons();
+      renderMap();
+      renderInspector();
+      if (syncConfig.gasUrl && syncConfig.autoLoad) {
+        pullFromGoogleSheets({ silent: true });
+      }
+
+      document.querySelectorAll('.doc-lang-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setDocLang(btn.getAttribute('data-doc-lang'));
+        });
+      });
+
+      document.getElementById('inspectorContent').addEventListener('click', (e) => {
+        const quickBtn = e.target.closest('[data-quick-lang]');
+        if (quickBtn) {
+          const order = ['en', 'ja', 'both'];
+          const next = order[(order.indexOf(state.docLang) + 1) % order.length];
+          setDocLang(next);
+        }
+      });
+
+      document.getElementById('searchInput').addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        renderMap();
+      });
+
+      document.getElementById('intentFilter').addEventListener('change', (e) => {
+        state.intentFilter = e.target.value;
+        renderMap();
+      });
+
+      document.getElementById('toggleQuotePills').addEventListener('change', (e) => {
+        state.showQuotePills = e.target.checked;
+        renderMap();
+      });
+
+      document.getElementById('btnZoomIn').addEventListener('click', () => {
+        state.zoom = Math.min(1.6, +(state.zoom + 0.1).toFixed(2));
+        renderMap();
+      });
+      document.getElementById('btnZoomOut').addEventListener('click', () => {
+        state.zoom = Math.max(0.5, +(state.zoom - 0.1).toFixed(2));
+        renderMap();
+      });
+      document.getElementById('btnZoomReset').addEventListener('click', () => {
+        state.zoom = 1;
+        renderMap();
+      });
+
+      document.getElementById('btnAddPaper').addEventListener('click', () => openPaperModal(null));
+      document.getElementById('btnAddLink').addEventListener('click', () => openLinkModal(null));
+      document.getElementById('btnManageThemes').addEventListener('click', openThemesModal);
+      document.getElementById('btnAutoClassify').addEventListener('click', openAutoClassifyModal);
+      document.getElementById('btnPaperpileImport').addEventListener('click', openPaperpileModal);
+      document.getElementById('btnCloudSync').addEventListener('click', openCloudSyncModal);
+      document.getElementById('btnDataIO').addEventListener('click', openDataIOModal);
+      document.getElementById('btnRefreshOpenAlex').addEventListener('click', () => syncWithOpenAlex({ autoLink: false }));
+      document.getElementById('btnAutoLinkOpenAlex').addEventListener('click', () => syncWithOpenAlex({ autoLink: true }));
+
+      document.getElementById('btnCloseModal').addEventListener('click', closeModal);
+      document.getElementById('modalBackdrop').addEventListener('click', (e) => {
+        if (e.target.id === 'modalBackdrop') closeModal();
+      });
+    });
+  </script>
+</body>
+</html>
