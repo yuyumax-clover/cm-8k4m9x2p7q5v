@@ -1189,7 +1189,13 @@
               document.getElementById('fCitations').value = w.cited_by_count ?? 0;
               document.getElementById('fJournal').value = w.primary_location?.source?.display_name || '';
               document.getElementById('fDoi').value = (w.doi || '').replace('https://doi.org/', '');
-              showToast('OpenAlexから書誌情報を入力しました');
+              const suggestedTheme = autoAssignThemeForPaper({
+                title: w.title || '',
+                oaTopics: (w.topics || []).map(t => t.display_name),
+                oaConcepts: (w.concepts || []).map(c => c.display_name)
+              }, document.getElementById('fTheme').value);
+              if (suggestedTheme) document.getElementById('fTheme').value = suggestedTheme;
+              showToast('OpenAlexから書誌情報と推奨テーマを入力しました');
             });
           });
         } catch (err) {
@@ -1583,9 +1589,10 @@
     }
 
     function openPaperpileModal() {
-      const themeOptions = state.themes.map(t =>
-        `<option value="${t.id}">${escapeHtml(t.name)}</option>`
-      ).join('');
+      const themeOptions = `<option value="__auto__" selected>自動振り分け（内容から判定）</option>` +
+        state.themes.map(t =>
+          `<option value="${t.id}">${escapeHtml(t.name)}</option>`
+        ).join('');
 
       openModal('Paperpile（BibTeX / JSON）一括インポート', `
         <div class="space-y-3 text-xs">
@@ -1705,7 +1712,7 @@
           );
           if (exists) return;
 
-          let themeId = defaultThemeId;
+          let themeId = defaultThemeId === '__auto__' ? autoAssignThemeForPaper(item, state.themes[0]?.id) : defaultThemeId;
           if (autoThemes && item.label) {
             let foundTheme = state.themes.find(t => t.name.toLowerCase() === item.label.toLowerCase());
             if (!foundTheme) {
@@ -1864,6 +1871,49 @@
     // =========================================================================
     // Auto-Suggest & Classify Horizontal Axis (Themes)
     // =========================================================================
+    function autoAssignThemeForPaper(paperObj, fallbackThemeId) {
+      if (!state.themes || state.themes.length === 0) return fallbackThemeId || '';
+      const text = [
+        paperObj.title, paperObj.summary, paperObj.summaryEn, paperObj.journal,
+        ...(paperObj.oaTopics || []), ...(paperObj.oaConcepts || [])
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      const semanticGroups = [
+        { themeHints: ['レビュー', '理論', 'review', 'theory', '感度'], keywords: ['review', 'optimization', 'sensitivity', 'theoretical', 'framework', 'limit', 'overview', 'survey', 'レビュー', '理論'] },
+        { themeHints: ['手法', '実験', '回路', 'マイクロ波', '光学', 'パルス', 'method', 'setup'], keywords: ['method', 'protocol', 'coherent', 'rabi', 'echo', 'ramsey', 'pulse', 'microwave', 'resonator', 'antenna', 'confocal', 'optical', 'readout', 'odmr', '手法', '実験', '制御'] },
+        { themeHints: ['応用', '展開', 'イメージング', '生体', '計測', 'app', 'sensing'], keywords: ['imaging', 'mapping', 'biological', 'cell', 'nanoscale', 'sensing', 'magnetometry', 'magnetometer', 'application', 'sensor', '応用', '計測', 'イメージング'] },
+        { themeHints: ['基礎', '先行', '材料', '欠陥', 'foundation', 'basic'], keywords: ['observation', 'single', 'defect', 'center', 'implantation', 'diamond', 'spin', 'foundation', '基礎', '先行'] }
+      ];
+
+      let bestId = fallbackThemeId || state.themes[0].id;
+      let bestScore = 0;
+
+      state.themes.forEach(t => {
+        let score = 0;
+        const tLower = (t.name || '').toLowerCase();
+        // Match tokens from theme name directly
+        tLower.split(/[・\/\s,()（）-]+/).filter(w => w.length >= 2).forEach(tok => {
+          if (text.includes(tok)) score += 3;
+        });
+        // Match semantic groups associated with this theme name
+        semanticGroups.forEach(g => {
+          if (g.themeHints.some(h => tLower.includes(h))) {
+            g.keywords.forEach(kw => {
+              if (text.includes(kw)) {
+                score += (paperObj.title || '').toLowerCase().includes(kw) ? 2 : 1;
+              }
+            });
+          }
+        });
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = t.id;
+        }
+      });
+
+      return bestId;
+    }
+
     function buildClassificationProposal(mode) {
       const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'];
       const getSearchText = (p) => [
@@ -2136,12 +2186,12 @@
       try {
         const shortId = paper.openAlexId.replace('https://openalex.org/', '');
         if (isCitedBy) {
-          const resp = await fetch(`https://api.openalex.org/works?filter=cites:${encodeURIComponent(shortId)}&sort=cited_by_count:desc&per-page=15`);
+          const resp = await fetch(`https://api.openalex.org/works?filter=cites:${encodeURIComponent(shortId)}&sort=cited_by_count:desc&per-page=20`);
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const data = await resp.json();
           candidates = data.results || [];
         } else {
-          const refs = (paper._referencedWorks || []).slice(0, 20).map(id => id.replace('https://openalex.org/', ''));
+          const refs = (paper._referencedWorks || []).map(id => id.replace('https://openalex.org/', ''));
           if (refs.length === 0) {
             document.getElementById('modalBody').innerHTML = `
               <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
@@ -2149,10 +2199,21 @@
               </div>`;
             return;
           }
-          const resp = await fetch(`https://api.openalex.org/works?filter=openalex_id:${refs.join('|')}&sort=cited_by_count:desc&per-page=20`);
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const data = await resp.json();
-          candidates = data.results || [];
+          const batchSize = 40;
+          const loadEl = document.getElementById('expandLoading');
+          for (let i = 0; i < refs.length; i += batchSize) {
+            const chunk = refs.slice(i, i + batchSize);
+            if (loadEl) {
+              loadEl.innerHTML = `<div class="font-semibold text-slate-700">参考文献をすべて取得中... (${Math.min(i + batchSize, refs.length)} / ${refs.length}件)</div>`;
+            }
+            const resp = await fetch(`https://api.openalex.org/works?filter=openalex_id:${chunk.join('|')}&per-page=50`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            if (Array.isArray(data.results)) {
+              candidates.push(...data.results);
+            }
+          }
+          candidates.sort((a, b) => (b.cited_by_count || 0) - (a.cited_by_count || 0));
         }
       } catch (err) {
         document.getElementById('modalBody').innerHTML = `
@@ -2181,15 +2242,20 @@
         );
       };
 
-      const themeOpts = state.themes.map(t =>
-        `<option value="${t.id}" ${t.id === paper.themeId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
-      ).join('');
+      const themeOpts = `<option value="__auto__" selected>自動振り分け（内容・トピックから判定）</option>` +
+        state.themes.map(t =>
+          `<option value="${t.id}">${escapeHtml(t.name)}</option>`
+        ).join('');
 
       let newPrechecked = 0;
       document.getElementById('modalBody').innerHTML = `
         <div class="space-y-3 text-xs">
           <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-            <span class="font-semibold text-slate-700">上位 ${candidates.length}件（引用数順）</span>
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-slate-700">${isCitedBy ? `被引用 上位 ${candidates.length}件` : `参考文献 全 ${candidates.length}件`}（引用数順）</span>
+              <button type="button" id="btnExpandSelectAll" class="px-2 py-0.5 text-[10px] font-semibold bg-white border border-slate-300 rounded hover:bg-slate-100">全選択</button>
+              <button type="button" id="btnExpandDeselectAll" class="px-2 py-0.5 text-[10px] font-semibold bg-white border border-slate-300 rounded hover:bg-slate-100">全解除</button>
+            </div>
             <div class="flex items-center gap-2">
               <label class="text-[11px] text-slate-600">配置先レーン:</label>
               <select id="expandTargetTheme" class="px-2 py-1 text-[11px] border border-slate-300 rounded-lg bg-white">${themeOpts}</select>
@@ -2228,6 +2294,12 @@
         </div>
       `;
 
+      document.getElementById('btnExpandSelectAll').addEventListener('click', () => {
+        document.querySelectorAll('[data-exp-idx]').forEach(cb => { cb.checked = true; });
+      });
+      document.getElementById('btnExpandDeselectAll').addEventListener('click', () => {
+        document.querySelectorAll('[data-exp-idx]').forEach(cb => { cb.checked = false; });
+      });
       document.getElementById('btnCancelExpand').addEventListener('click', closeModal);
       document.getElementById('btnApplyExpand').addEventListener('click', () => {
         const targetThemeId = document.getElementById('expandTargetTheme').value;
@@ -2255,7 +2327,7 @@
               year: w.publication_year || paper.year,
               journal: w.primary_location?.source?.display_name || '',
               doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
-              themeId: targetThemeId,
+              themeId: targetThemeId === '__auto__' ? autoAssignThemeForPaper({ title: w.title, summaryEn: reconstructAbstract(w.abstract_inverted_index), journal: w.primary_location?.source?.display_name || '', oaTopics: (w.topics || []).slice(0, 4).map(t => t.display_name), oaConcepts: (w.concepts || []).slice(0, 5).map(c => c.display_name) }, paper.themeId) : targetThemeId,
               citations: w.cited_by_count || 0,
               summary: '',
               summaryEn: reconstructAbstract(w.abstract_inverted_index),
