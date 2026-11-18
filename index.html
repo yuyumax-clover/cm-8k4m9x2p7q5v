@@ -112,6 +112,9 @@
       <button id="btnAutoLinkOpenAlex" type="button" class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition" title="OpenAlexの参考文献データからマップ内の論文同士を自動で線で結ぶ">
         引用線自動結線
       </button>
+      <button id="btnBatchAiSummary" type="button" class="px-2.5 py-1.5 text-xs font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 rounded-lg transition" title="AI要約が未作成の論文にまとめてAI要約を生成">
+        ✨ AI要約一括
+      </button>
       <button id="btnCloudSync" type="button" class="px-2.5 py-1.5 text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition inline-flex items-center gap-1.5" title="Googleスプレッドシートと自動同期">
         <span id="cloudSyncDot" class="w-2 h-2 rounded-full bg-slate-300"></span>
         スプレッドシート同期
@@ -155,6 +158,11 @@
             <button type="button" data-doc-lang="ja" class="doc-lang-btn px-2 py-0.5 text-[11px] font-semibold rounded-md transition">JA</button>
             <button type="button" data-doc-lang="both" class="doc-lang-btn px-2 py-0.5 text-[11px] font-semibold rounded-md transition">日英</button>
           </div>
+          <span class="text-slate-300">|</span>
+          <label class="inline-flex items-center gap-1.5 cursor-pointer text-slate-600 select-none" title="選択中の論文と直接つながる引用関係のみを強調表示します">
+            <input id="toggleFocusMode" type="checkbox" class="rounded border-slate-300 text-amber-500 focus:ring-amber-400" />
+            <span>選択論文のつながりのみ強調</span>
+          </label>
           <span class="text-slate-300">|</span>
           <label class="inline-flex items-center gap-1.5 cursor-pointer text-slate-600 select-none">
             <input id="toggleQuotePills" type="checkbox" checked class="rounded border-slate-300 text-amber-500 focus:ring-amber-400" />
@@ -220,7 +228,7 @@
     };
 
     const LANE_WIDTH = 280;
-    const AXIS_WIDTH = 76;
+    const AXIS_WIDTH = 96;
     const HEADER_HEIGHT = 56;
     const ROW_HEIGHT = 128;
     const CARD_WIDTH = 236;
@@ -281,7 +289,8 @@
       intentFilter: 'all',
       zoom: 1,
       showQuotePills: true,
-      docLang: 'en'
+      docLang: 'en',
+      focusMode: false
     };
 
     let undoStack = [];
@@ -355,6 +364,11 @@
             tasks.push(translateText(p.summaryEn, 'ja').then(res => { if (res) { p.summary = res; changed = true; } }));
           } else if ((state.docLang === 'en' || state.docLang === 'both') && !p.summaryEn && p.summary) {
             tasks.push(translateText(p.summary, 'en').then(res => { if (res) { p.summaryEn = res; changed = true; } }));
+          }
+          if ((state.docLang === 'ja' || state.docLang === 'both') && !p.aiSummary && p.aiSummaryEn) {
+            tasks.push(translateText(p.aiSummaryEn, 'ja').then(res => { if (res) { p.aiSummary = res; changed = true; } }));
+          } else if ((state.docLang === 'en' || state.docLang === 'both') && !p.aiSummaryEn && p.aiSummary) {
+            tasks.push(translateText(p.aiSummary, 'en').then(res => { if (res) { p.aiSummaryEn = res; changed = true; } }));
           }
           const relLinks = state.links.filter(l => l.sourceId === p.id || l.targetId === p.id).slice(0, 6);
           relLinks.forEach(lnk => {
@@ -502,29 +516,62 @@
       return { visiblePapers, matchingLinks };
     }
 
-    function computeLayout(visiblePapers) {
-      // Unique sorted years ascending (top = older, bottom = newer)
-      const yearsSet = new Set(visiblePapers.map(p => Number(p.year)));
-      const years = Array.from(yearsSet).sort((a, b) => a - b);
+    function getPubDateDisplay(p) {
+      const d = (p.pubDate || '').trim();
+      if (d) return d;
+      return p.year ? String(p.year) : '';
+    }
 
-      // Group papers by (year, themeId) to prevent same-cell overlap
-      const cellGroups = {};
-      visiblePapers.forEach(p => {
-        const key = `${p.year}__${p.themeId}`;
-        if (!cellGroups[key]) cellGroups[key] = [];
-        cellGroups[key].push(p);
+    function getSortDateKey(p) {
+      const d = (p.pubDate || '').trim();
+      const m = d.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?/);
+      if (m) {
+        const y = parseInt(m[1], 10) || 0;
+        const mo = parseInt(m[2] || '0', 10) || 0;
+        const da = parseInt(m[3] || '0', 10) || 0;
+        return y * 10000 + mo * 100 + da;
+      }
+      return (Number(p.year) || 0) * 10000;
+    }
+
+    function computeLayout(visiblePapers) {
+      // Sort papers chronologically by full publication date (YYYY-MM-DD)
+      const sortedPapers = [...visiblePapers].sort((a, b) => {
+        const ka = getSortDateKey(a), kb = getSortDateKey(b);
+        if (ka !== kb) return ka - kb;
+        return (a.title || '').localeCompare(b.title || '');
       });
 
-      // Dynamic row height per year so stacked cards stay strictly inside their year band
+      // Build ordered unique date slots (YYYY-MM-DD / YYYY-MM / YYYY)
+      const dateSlots = [];
+      const slotMap = {};
+      sortedPapers.forEach(p => {
+        const label = getPubDateDisplay(p) || '不明';
+        const key = `${getSortDateKey(p)}__${label}`;
+        if (!slotMap[key]) {
+          slotMap[key] = { key, label, sortKey: getSortDateKey(p), year: Number(p.year) || 0 };
+          dateSlots.push(slotMap[key]);
+        }
+        p._slotKey = key;
+      });
+
+      // Group papers by (dateSlot, themeId) to prevent same-cell overlap
+      const cellGroups = {};
+      sortedPapers.forEach(p => {
+        const cKey = `${p._slotKey}__${p.themeId}`;
+        if (!cellGroups[cKey]) cellGroups[cKey] = [];
+        cellGroups[cKey].push(p);
+      });
+
       const CARD_GAP_Y = 16;
       const CARD_GAP_X = 16;
-      const yearTop = {};
+      const slotTop = {};
       let currentY = HEADER_HEIGHT;
-      years.forEach(y => {
-        yearTop[y] = currentY;
+      dateSlots.forEach(slot => {
+        slotTop[slot.key] = currentY;
         let maxInCell = 1;
         state.themes.forEach(t => {
-          const cnt = (cellGroups[`${y}__${t.id}`] || []).length;
+          const cnt = (cellGroups[`${slot.key}__${t.id}`] || []).length;
           if (cnt > maxInCell) maxInCell = cnt;
         });
         const neededHeight = 20 + maxInCell * CARD_HEIGHT + Math.max(0, maxInCell - 1) * CARD_GAP_Y + 20;
@@ -532,15 +579,14 @@
       });
 
       const positions = {};
-      visiblePapers.forEach(p => {
+      sortedPapers.forEach(p => {
         const themeIdx = Math.max(0, state.themes.findIndex(t => t.id === p.themeId));
-        const yr = Number(p.year);
-        const group = cellGroups[`${p.year}__${p.themeId}`] || [p];
+        const group = cellGroups[`${p._slotKey}__${p.themeId}`] || [p];
         const idxInGroup = group.indexOf(p);
 
         const baseX = AXIS_WIDTH + themeIdx * LANE_WIDTH + (LANE_WIDTH - CARD_WIDTH) / 2;
         const x = Math.max(AXIS_WIDTH + 8, baseX + (Number(p.xOffset) || 0));
-        const y = (yearTop[yr] ?? HEADER_HEIGHT) + 20 + idxInGroup * (CARD_HEIGHT + CARD_GAP_Y);
+        const y = (slotTop[p._slotKey] ?? HEADER_HEIGHT) + 20 + idxInGroup * (CARD_HEIGHT + CARD_GAP_Y);
 
         positions[p.id] = { x, y, w: CARD_WIDTH, h: CARD_HEIGHT };
       });
@@ -576,7 +622,7 @@
       const totalWidth = Math.max(maxRight, 820);
       const totalHeight = Math.max(maxBottom, 520);
 
-      return { years, yearTop, positions, totalWidth, totalHeight };
+      return { dateSlots, slotTop, positions, totalWidth, totalHeight };
     }
 
     // =========================================================================
@@ -587,7 +633,7 @@
       document.getElementById('btnEmptyAddPaper')?.addEventListener('click', () => openPaperModal(null));
       document.getElementById('btnEmptyPaperpile')?.addEventListener('click', openPaperpileModal);
       const { visiblePapers, matchingLinks } = getFilteredData();
-      const { years, yearTop, positions, totalWidth, totalHeight } = computeLayout(visiblePapers);
+      const { dateSlots, slotTop, positions, totalWidth, totalHeight } = computeLayout(visiblePapers);
 
       document.getElementById('statsSummary').textContent =
         `表示中: 論文 ${visiblePapers.length}件 ／ 引用関係 ${matchingLinks.length}本`;
@@ -602,7 +648,7 @@
 
       // 1. Horizontal Theme Lane Headers & Vertical Lane Dividers
       html += `<div class="absolute top-0 left-0 right-0 flex border-b border-slate-200 bg-slate-50/95 z-20" style="height:${HEADER_HEIGHT}px;">`;
-      html += `<div class="shrink-0 border-r border-slate-200 flex items-center justify-center text-xs font-bold text-slate-500" style="width:${AXIS_WIDTH}px;">出版年</div>`;
+      html += `<div class="shrink-0 border-r border-slate-200 flex items-center justify-center text-xs font-bold text-slate-500" style="width:${AXIS_WIDTH}px;">出版年月日</div>`;
       state.themes.forEach((t, idx) => {
         const count = visiblePapers.filter(p => p.themeId === t.id).length;
         html += `
@@ -623,13 +669,13 @@
         html += `<div class="absolute top-[${HEADER_HEIGHT}px] bottom-0 border-r border-dashed border-slate-200/80 ${stripe} pointer-events-none" style="left:${left}px;width:${LANE_WIDTH}px;top:${HEADER_HEIGHT}px;"></div>`;
       });
 
-      // 2. Year Axis Labels & Dash-Dot Horizontal Guide Lines (matching user's sketch!)
-      years.forEach((y) => {
-        const lineY = (yearTop[y] ?? HEADER_HEIGHT) + 12;
+      // 2. Date Axis Labels (YYYY-MM-DD) & Horizontal Guide Lines
+      dateSlots.forEach((slot) => {
+        const lineY = (slotTop[slot.key] ?? HEADER_HEIGHT) + 12;
         html += `
           <div class="absolute left-0 flex items-center pointer-events-none z-10" style="top:${lineY - 10}px;width:${totalWidth}px;">
-            <div class="shrink-0 text-right pr-3 text-xs font-bold text-slate-700 font-mono" style="width:${AXIS_WIDTH}px;">${y}</div>
-            <div class="flex-1 h-0 border-t-2" style="border-top-style:dashed;border-color:#94a3b8;opacity:0.55;"></div>
+            <div class="shrink-0 text-right pr-2.5 text-[11px] font-bold text-slate-700 font-mono" style="width:${AXIS_WIDTH}px;">${escapeHtml(slot.label)}</div>
+            <div class="flex-1 h-0 border-t-2" style="border-top-style:dashed;border-color:#94a3b8;opacity:0.5;"></div>
           </div>`;
       });
 
@@ -645,6 +691,17 @@
 
       const quotePills = [];
 
+      // Pre-calculate port offsets so multiple edges from/to the same card don't overlap
+      const outEdgesByPaper = {};
+      const inEdgesByPaper = {};
+      matchingLinks.forEach(lnk => {
+        if (!positions[lnk.sourceId] || !positions[lnk.targetId]) return;
+        (outEdgesByPaper[lnk.sourceId] = outEdgesByPaper[lnk.sourceId] || []).push(lnk);
+        (inEdgesByPaper[lnk.targetId] = inEdgesByPaper[lnk.targetId] || []).push(lnk);
+      });
+      Object.values(outEdgesByPaper).forEach(arr => arr.sort((a, b) => (positions[a.targetId].x - positions[b.targetId].x)));
+      Object.values(inEdgesByPaper).forEach(arr => arr.sort((a, b) => (positions[a.sourceId].x - positions[b.sourceId].x)));
+
       matchingLinks.forEach(lnk => {
         const srcPos = positions[lnk.sourceId];
         const tgtPos = positions[lnk.targetId];
@@ -655,22 +712,34 @@
         const isConnectedToSelectedPaper =
           state.selectedPaperId && (lnk.sourceId === state.selectedPaperId || lnk.targetId === state.selectedPaperId);
 
+        if (state.focusMode && state.selectedPaperId && !isConnectedToSelectedPaper) {
+          return;
+        }
+
+        const outArr = outEdgesByPaper[lnk.sourceId] || [lnk];
+        const outIdx = outArr.indexOf(lnk);
+        const outSpread = outArr.length > 1 ? ((outIdx / (outArr.length - 1)) - 0.5) * Math.min(110, outArr.length * 22) : 0;
+
+        const inArr = inEdgesByPaper[lnk.targetId] || [lnk];
+        const inIdx = inArr.indexOf(lnk);
+        const inSpread = inArr.length > 1 ? ((inIdx / (inArr.length - 1)) - 0.5) * Math.min(110, inArr.length * 22) : 0;
+
         // Start from bottom of older/cited paper, end at top of newer/citing paper
-        const startX = srcPos.x + srcPos.w / 2;
+        const startX = srcPos.x + srcPos.w / 2 + outSpread;
         const startY = srcPos.y + srcPos.h;
-        const endX = tgtPos.x + tgtPos.w / 2;
+        const endX = tgtPos.x + tgtPos.w / 2 + inSpread;
         const endY = tgtPos.y;
 
-        const dy = Math.max(40, Math.abs(endY - startY) * 0.52);
+        const dy = Math.max(42, Math.abs(endY - startY) * 0.52);
         const c1x = startX;
         const c1y = startY + dy;
         const c2x = endX;
         const c2y = endY - dy;
 
         const pathD = `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`;
-        const strokeWidth = isSelected ? 3.5 : (isConnectedToSelectedPaper ? 2.8 : 2);
+        const strokeWidth = isSelected ? 3.8 : (isConnectedToSelectedPaper ? 3.0 : 2.0);
         const opacity = (state.selectedPaperId || state.selectedLinkId)
-          ? (isSelected || isConnectedToSelectedPaper ? 0.95 : 0.25)
+          ? (isSelected || isConnectedToSelectedPaper ? 0.96 : 0.16)
           : 0.78;
 
         // Midpoint of cubic bezier at t=0.5
@@ -679,10 +748,11 @@
 
         html += `
           <path d="${pathD}" fill="none" stroke="transparent" stroke-width="14" class="cursor-pointer" data-link-id="${lnk.id}" />
-          <path d="${pathD}" fill="none" stroke="${meta.color}" stroke-width="${strokeWidth}" stroke-opacity="${opacity}" marker-end="url(#arrow-${lnk.intent || 'background'})" class="edge-path" data-link-id="${lnk.id}" />
+          <path d="${pathD}" fill="none" stroke="${meta.color}" stroke-width="${strokeWidth}" stroke-opacity="${opacity}" marker-end="url(#arrow-${lnk.intent || 'background'})" class="edge-path" data-link-id="${lnk.id}" data-src-id="${lnk.sourceId}" data-tgt-id="${lnk.targetId}" />
+          <circle cx="${startX}" cy="${startY}" r="${isConnectedToSelectedPaper || isSelected ? 3.8 : 2.8}" fill="${meta.color}" fill-opacity="${opacity}" class="pointer-events-none" />
         `;
 
-        if (state.showQuotePills) {
+        if (state.showQuotePills && (opacity > 0.3)) {
           quotePills.push({ id: lnk.id, x: midX, y: midY, color: meta.color, isSelected, quote: lnk.quote });
         }
       });
@@ -717,20 +787,37 @@
         const outCount = state.links.filter(l => l.targetId === p.id).length;
         const tier = getCitationTierStyle(p.citations);
 
+        let relationBadge = '';
+        let dimClass = '';
+        if (state.selectedPaperId && !isSelected) {
+          const isCitedBySel = state.links.some(l => l.sourceId === p.id && l.targetId === state.selectedPaperId);
+          const citesSel = state.links.some(l => l.targetId === p.id && l.sourceId === state.selectedPaperId);
+          if (isCitedBySel && citesSel) {
+            relationBadge = `<span class="absolute -top-2.5 right-2 px-1.5 py-0.5 text-[9px] font-bold bg-indigo-600 text-white rounded-full shadow-xs">相互引用</span>`;
+          } else if (isCitedBySel) {
+            relationBadge = `<span class="absolute -top-2.5 right-2 px-1.5 py-0.5 text-[9px] font-bold bg-sky-600 text-white rounded-full shadow-xs">↑ 選択論文が引用</span>`;
+          } else if (citesSel) {
+            relationBadge = `<span class="absolute -top-2.5 right-2 px-1.5 py-0.5 text-[9px] font-bold bg-amber-600 text-white rounded-full shadow-xs">↓ 選択論文を引用</span>`;
+          } else {
+            dimClass = state.focusMode ? 'opacity-20' : 'opacity-55';
+          }
+        }
+
         const borderClass = isSelected
           ? `border-[3.5px] ${tier.border} ring-4 ${tier.ring} bg-white shadow-md`
-          : `border-[2.5px] ${tier.border} bg-slate-100/95 hover:bg-white`;
+          : `border-[2.5px] ${tier.border} bg-slate-100/95 hover:bg-white ${dimClass}`;
 
         html += `
           <div data-paper-id="${p.id}"
             class="paper-card absolute rounded-lg ${borderClass} px-3 py-2 cursor-pointer flex flex-col justify-between z-20 shadow-sm"
             style="left:${pos.x}px;top:${pos.y}px;width:${pos.w}px;height:${pos.h}px;">
+            ${relationBadge}
             <div>
               <div class="text-[11px] font-bold text-slate-900 leading-snug line-clamp-2" title="${escapeHtml(p.title)}">
                 ${escapeHtml(p.title)}
               </div>
               <div class="text-[11px] text-slate-600 truncate mt-0.5">
-                ${escapeHtml(p.shortAuthor || p.authors)} (${p.year})
+                ${escapeHtml(p.shortAuthor || p.authors)} (${escapeHtml(getPubDateDisplay(p))})
               </div>
             </div>
             <div class="flex items-center justify-between gap-1 pt-1 border-t border-slate-200/80 text-[10px]">
@@ -986,7 +1073,7 @@
               <h2 class="text-sm font-bold text-slate-900 leading-snug">${escapeHtml(p.title)}</h2>
               <p class="text-xs text-slate-600 mt-1">${escapeHtml(p.authors)}</p>
               <div class="flex flex-wrap items-center gap-2 mt-2 text-xs">
-                <span class="font-bold bg-slate-900 text-white px-2 py-0.5 rounded">${p.year}</span>
+                <span class="font-bold bg-slate-900 text-white px-2 py-0.5 rounded font-mono">${escapeHtml(getPubDateDisplay(p))}</span>
                 <span class="text-slate-500">${escapeHtml(p.journal || '')}</span>
               </div>
             </div>
@@ -1028,6 +1115,21 @@
                   Paperpileで検索 ↗
                 </button>
               </div>
+            </div>
+
+            <div class="p-3 rounded-xl bg-violet-50/70 border border-violet-200 text-xs text-slate-800 leading-relaxed space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] font-bold text-violet-800 uppercase">✨ AI要約</span>
+                <div class="flex items-center gap-1">
+                  <button type="button" id="btnGenAiSummary" class="px-2 py-0.5 text-[10px] font-bold bg-violet-600 hover:bg-violet-700 text-white rounded transition">
+                    ${(p.aiSummary || p.aiSummaryEn) ? '再生成' : 'AI要約を生成'}
+                  </button>
+                  <button type="button" id="btnAiSettings" class="px-1.5 py-0.5 text-[10px] font-medium bg-white border border-violet-200 hover:border-violet-400 text-violet-700 rounded transition" title="Gemini APIキー設定（任意）">
+                    ⚙
+                  </button>
+                </div>
+              </div>
+              <div>${(p.aiSummary || p.aiSummaryEn) ? renderBilingualBlock(p.aiSummaryEn, p.aiSummary) : '<span class="text-violet-700/70 text-[11px]">「AI要約を生成」を押すと、Semantic Scholar TL;DR（または設定済みのGemini API）で要約を作成します。</span>'}</div>
             </div>
 
             <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed space-y-1.5">
@@ -1152,6 +1254,20 @@
           }
           window.open('https://paperpile.com/app', '_blank', 'noopener,noreferrer');
         });
+        document.getElementById('btnGenAiSummary')?.addEventListener('click', async () => {
+          const btn = document.getElementById('btnGenAiSummary');
+          if (btn) btn.textContent = '生成中...';
+          const ok = await generatePaperAiSummary(p);
+          if (ok) {
+            saveState();
+            renderInspector();
+            showToast('AI要約を生成しました');
+          } else {
+            if (btn) btn.textContent = 'AI要約を生成';
+            showToast('要約元となる情報を取得できませんでした');
+          }
+        });
+        document.getElementById('btnAiSettings')?.addEventListener('click', openAiSettingsModal);
         document.getElementById('btnFetchSummary')?.addEventListener('click', async () => {
           const btn = document.getElementById('btnFetchSummary');
           if (btn) btn.textContent = '取得中...';
@@ -1253,8 +1369,11 @@
               <input id="fShortAuthor" type="text" required placeholder="例: Maze et al." value="${escapeHtml(existing?.shortAuthor || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">出版年 *</label>
-              <input id="fYear" type="number" required min="1900" max="2100" value="${existing?.year || 2024}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              <label class="block text-xs font-semibold text-slate-700 mb-1">出版年月日 (YYYY-MM-DD) *</label>
+              <div class="flex gap-1.5">
+                <input id="fPubDate" type="text" placeholder="2024-05-12" value="${escapeHtml(existing?.pubDate || existing?.year || 2024)}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg font-mono" />
+                <input id="fYear" type="number" required min="1900" max="2100" value="${existing?.year || 2024}" class="w-20 px-2 py-1.5 text-xs border border-slate-300 rounded-lg" title="出版年" />
+              </div>
             </div>
           </div>
           <div>
@@ -1336,6 +1455,7 @@
               document.getElementById('fAuthors').value = authorsList.join(', ');
               document.getElementById('fShortAuthor').value = authorsList.length > 1 ? `${firstA} et al.` : firstA;
               document.getElementById('fYear').value = w.publication_year || 2024;
+              document.getElementById('fPubDate').value = w.publication_date || String(w.publication_year || 2024);
               document.getElementById('fCitations').value = w.cited_by_count ?? 0;
               document.getElementById('fJournal').value = w.primary_location?.source?.display_name || '';
               document.getElementById('fDoi').value = (w.doi || '').replace('https://doi.org/', '');
@@ -1364,7 +1484,8 @@
           title: document.getElementById('fTitle').value.trim(),
           shortAuthor: document.getElementById('fShortAuthor').value.trim(),
           authors: document.getElementById('fAuthors').value.trim(),
-          year: Number(document.getElementById('fYear').value),
+          pubDate: document.getElementById('fPubDate').value.trim() || String(document.getElementById('fYear').value),
+          year: Number((document.getElementById('fPubDate').value.trim().match(/^(\d{4})/) || [])[1] || document.getElementById('fYear').value),
           themeId: document.getElementById('fTheme').value,
           citations: Number(document.getElementById('fCitations').value) || 0,
           journal: document.getElementById('fJournal').value.trim(),
@@ -1434,6 +1555,16 @@
               <input id="lSection" type="text" placeholder="例: Introduction / Methods" value="${escapeHtml(existing?.section || '')}" class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg" />
             </div>
           </div>
+          <details class="p-2.5 rounded-xl bg-indigo-50/60 border border-indigo-200 text-xs">
+            <summary class="cursor-pointer font-bold text-indigo-900 select-none">本文テキストから「[1]」等の直前を精密抽出する</summary>
+            <div class="mt-2 space-y-2">
+              <div class="flex items-center gap-2">
+                <input id="extMarker" type="text" placeholder="文献番号 (例: 14) または 著者名" class="flex-1 px-2.5 py-1 text-xs bg-white border border-indigo-200 rounded-lg" />
+                <button type="button" id="btnRunExtract" class="px-3 py-1 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shrink-0">直前の文を抽出</button>
+              </div>
+              <textarea id="extBodyText" rows="3" placeholder="論文PDFから引用を含む段落をそのまま貼り付けてください..." class="w-full p-2 text-[11px] bg-white border border-indigo-200 rounded-lg font-serif"></textarea>
+            </div>
+          </details>
           <div>
             <label class="block text-xs font-semibold text-slate-700 mb-1">本文中の引用文言（英語原文）*</label>
             <textarea id="lQuote" rows="2" required placeholder="論文本文中の引用箇所をそのまま入力..." class="w-full px-3 py-1.5 text-xs border border-slate-300 rounded-lg font-serif">${escapeHtml(existing?.quote || '')}</textarea>
@@ -1453,6 +1584,24 @@
         </form>
       `);
 
+      document.getElementById('btnRunExtract')?.addEventListener('click', () => {
+        const bodyTxt = document.getElementById('extBodyText').value;
+        const marker = document.getElementById('extMarker').value.trim();
+        const citedP = state.papers.find(x => x.id === document.getElementById('lSource').value);
+        const surname = (citedP?.shortAuthor || citedP?.authors || '').split(/[\s,]+/)[0] || '';
+        const isNum = /^\[?\d+\]?$/.test(marker);
+        const extracted = extractCitationSentence(bodyTxt, {
+          refNum: isNum ? marker : '',
+          authorSurname: isNum ? surname : (marker || surname),
+          year: citedP?.year || ''
+        });
+        if (extracted) {
+          document.getElementById('lQuote').value = extracted;
+          showToast('引用マーカー直前の文を抽出しました');
+        } else {
+          showToast('該当する文を抽出できませんでした');
+        }
+      });
       document.getElementById('btnCancelLink').addEventListener('click', closeModal);
       document.getElementById('linkForm').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -1995,6 +2144,10 @@
             if (typeof data.cited_by_count === 'number') {
               p.citations = data.cited_by_count;
             }
+            if (data.publication_date) {
+              p.pubDate = data.publication_date;
+              p.year = Number(data.publication_year || data.publication_date.slice(0, 4)) || p.year;
+            }
             if (data.id) p.openAlexId = data.id;
             if (Array.isArray(data.referenced_works)) {
               p._referencedWorks = data.referenced_works;
@@ -2066,6 +2219,63 @@
       }
     }
 
+    function extractCitationSentence(rawText, { refNum = '', authorSurname = '', year = '' } = {}) {
+      const text = (rawText || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '';
+
+      // Protect common abbreviations before splitting sentences
+      const protectedText = text
+        .replace(/\b(et al|Fig|Figs|Eq|Eqs|Ref|Refs|Vol|No|pp|e\.g|i\.e|vs|Dr|Prof)\./gi, '$1__DOT__');
+
+      // Split into sentences ending with . ! ? 。
+      const rawSentences = protectedText
+        .split(/(?<=[.!?。])\s+/)
+        .map(x => x.replace(/__DOT__/g, '.').trim())
+        .filter(Boolean);
+
+      if (rawSentences.length === 0) return text;
+
+      // 1. If user specified a reference number like "14" or "[14]"
+      const numOnly = (refNum || '').replace(/[^0-9]/g, '');
+      if (numOnly) {
+        const bracketRegex = new RegExp(`\\[(?:[^\\]]*?\\b${numOnly}\\b[^\\]]*?)\\]`);
+        const hit = rawSentences.find(sent => bracketRegex.test(sent));
+        if (hit) {
+          // Trim right after the matching bracket if there's trailing text in the same block
+          const m = hit.match(bracketRegex);
+          if (m) {
+            const endIdx = m.index + m[0].length;
+            return hit.slice(0, endIdx).trim();
+          }
+          return hit;
+        }
+      }
+
+      // 2. Match author surname or (Author, Year)
+      const cleanSurname = (authorSurname || '').replace(/[^a-zA-Z0-9\u3040-\u30ff\u4e00-\u9faf-]/g, '');
+      if (cleanSurname.length >= 2) {
+        const authorHit = rawSentences.find(sent =>
+          sent.toLowerCase().includes(cleanSurname.toLowerCase())
+        );
+        if (authorHit) return authorHit;
+      }
+
+      // 3. Otherwise pick the sentence containing a bracketed citation [n] or (Author, YYYY)
+      const anyCiteHit = rawSentences.find(sent =>
+        /\[[0-9,\s–-]+\]/.test(sent) || /\([A-Z][a-zA-Z-]+.*?(?:19|20)\d{2}[a-z]?\)/.test(sent)
+      );
+      if (anyCiteHit) {
+        const m = anyCiteHit.match(/(\[[0-9,\s–-]+\]|\([A-Z][a-zA-Z-]+.*?(?:19|20)\d{2}[a-z]?\))/);
+        if (m) {
+          const endIdx = m.index + m[0].length;
+          return anyCiteHit.slice(0, endIdx).trim();
+        }
+        return anyCiteHit;
+      }
+
+      return rawSentences[0];
+    }
+
     async function enrichLinksWithSemanticScholar(targetLinks) {
       if (!targetLinks || targetLinks.length === 0) return 0;
       // Group links by citing paper (targetId) so we make at most 1 S2 request per citing paper
@@ -2114,7 +2324,11 @@
             });
 
             if (match && Array.isArray(match.contexts) && match.contexts.length > 0) {
-              lnk.quote = match.contexts.join(' / ');
+              const surname = (cited.shortAuthor || cited.authors || '').split(/[\s,]+/)[0] || '';
+              const precise = match.contexts
+                .map(ctx => extractCitationSentence(ctx, { authorSurname: surname, year: cited.year }))
+                .filter(Boolean);
+              lnk.quote = (precise.length > 0 ? precise : match.contexts).join(' / ');
               if (Array.isArray(match.intents) && match.intents[0] && intentMap[match.intents[0]]) {
                 lnk.intent = intentMap[match.intents[0]];
               }
@@ -2597,6 +2811,7 @@
               authors: authorsList.join(', '),
               shortAuthor: authorsList.length > 1 ? `${firstA} et al.` : firstA,
               year: w.publication_year || paper.year,
+              pubDate: w.publication_date || String(w.publication_year || paper.year || ''),
               journal: w.primary_location?.source?.display_name || '',
               doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//i, ''),
               themeId: targetThemeId === '__auto__' ? autoAssignThemeForPaper({ title: w.title, summaryEn: reconstructAbstract(w.abstract_inverted_index), journal: w.primary_location?.source?.display_name || '', oaTopics: (w.topics || []).slice(0, 4).map(t => t.display_name), oaConcepts: (w.concepts || []).slice(0, 5).map(c => c.display_name) }, paper.themeId) : targetThemeId,
@@ -2915,6 +3130,141 @@ function jsonOut_(obj) {
     }
 
     // =========================================================================
+    // AI Summary Generation (Semantic Scholar TL;DR + Optional Gemini API)
+    // =========================================================================
+    const GEMINI_KEY_STORAGE = 'citemap_gemini_key_v1';
+
+    function getGeminiApiKey() {
+      try { return localStorage.getItem(GEMINI_KEY_STORAGE) || ''; } catch (e) { return ''; }
+    }
+
+    function openAiSettingsModal() {
+      const currentKey = getGeminiApiKey();
+      openModal('AI要約設定（Gemini API・任意）', `
+        <div class="space-y-3 text-xs">
+          <div class="p-3 rounded-xl bg-violet-50 border border-violet-200 text-violet-950 space-y-1">
+            <div class="font-bold">AI要約の動作方式</div>
+            <p class="text-[11px] leading-relaxed">
+              APIキーなしでも <strong>Semantic Scholar TL;DR + 自動翻訳</strong> で1文のAI要約を生成できます。ご自身の <strong>Gemini APIキー</strong> を設定すると、アブストラクトをもとに「目的・手法・成果」の3点要約を日本語・英語で生成します（キーは端末のブラウザ内のみに保存されます）。
+            </p>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Gemini API キー（任意）</label>
+            <input id="inpGeminiKey" type="password" placeholder="AIza..." value="${escapeHtml(currentKey)}" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono text-xs" />
+          </div>
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
+            <button type="button" id="btnCancelAiKey" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+            <button type="button" id="btnSaveAiKey" class="px-4 py-1.5 font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">保存する</button>
+          </div>
+        </div>
+      `);
+      document.getElementById('btnCancelAiKey').addEventListener('click', closeModal);
+      document.getElementById('btnSaveAiKey').addEventListener('click', () => {
+        const val = document.getElementById('inpGeminiKey').value.trim();
+        try {
+          if (val) localStorage.setItem(GEMINI_KEY_STORAGE, val);
+          else localStorage.removeItem(GEMINI_KEY_STORAGE);
+        } catch (e) {}
+        closeModal();
+        showToast(val ? 'Gemini APIキーを保存しました' : 'Gemini APIキーをクリアしました');
+      });
+    }
+
+    async function generatePaperAiSummary(p) {
+      await fetchAbstractFallback(p);
+      const apiKey = getGeminiApiKey();
+
+      // 1. If Gemini API key is configured, generate structured EN + JA summary
+      if (apiKey) {
+        try {
+          const prompt = `Summarize this academic paper concisely in both Japanese and English (2-3 sentences covering objective, method, and key finding). Return strictly valid JSON with keys "ja" and "en".\nTitle: ${p.title}\nAuthors: ${p.authors || p.shortAuthor}\nYear: ${p.year}\nAbstract: ${p.summaryEn || p.summary || '(Not available, infer cautiously from title only)'}`;
+          const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json' }
+            })
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const parsed = JSON.parse(txt);
+            if (parsed.ja || parsed.en) {
+              p.aiSummary = parsed.ja || '';
+              p.aiSummaryEn = parsed.en || '';
+              return true;
+            }
+          }
+        } catch (e) {
+          // Fall through to Semantic Scholar TL;DR fallback
+        }
+      }
+
+      // 2. Zero-setup fallback: Semantic Scholar TL;DR + automatic translation
+      let enTldr = '';
+      try {
+        let url = '';
+        if (p.doi && p.doi.trim()) {
+          const cleanDoi = p.doi.trim().replace(/^https?:\/\/doi\.org\//i, '');
+          url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(cleanDoi)}?fields=tldr,abstract`;
+        } else if (p.title) {
+          url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(p.title)}&fields=tldr,abstract&limit=1`;
+        }
+        if (url) {
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const json = await resp.json();
+            const item = Array.isArray(json.data) ? json.data[0] : json;
+            if (item?.tldr?.text) enTldr = item.tldr.text;
+            if (!p.summaryEn && item?.abstract) p.summaryEn = item.abstract;
+          }
+        }
+      } catch (e) {}
+
+      // 3. Fallback to first 2 sentences of abstract if TL;DR unavailable
+      if (!enTldr && p.summaryEn) {
+        const sents = p.summaryEn.split(/(?<=[.!?])\s+/);
+        enTldr = sents.slice(0, 2).join(' ');
+      }
+
+      if (enTldr) {
+        p.aiSummaryEn = enTldr;
+        const ja = await translateText(enTldr, 'ja');
+        if (ja) p.aiSummary = ja;
+        return true;
+      }
+
+      if (p.summary) {
+        p.aiSummary = p.summary.slice(0, 140) + (p.summary.length > 140 ? '...' : '');
+        return true;
+      }
+
+      return false;
+    }
+
+    async function batchGenerateAiSummaries() {
+      const targets = state.papers.filter(p => !p.aiSummary && !p.aiSummaryEn);
+      if (targets.length === 0) {
+        showToast('すべての論文にAI要約が登録されています');
+        return;
+      }
+      showToast(`${targets.length}件の論文にAI要約を生成中...`);
+      let done = 0;
+      for (const p of targets) {
+        const ok = await generatePaperAiSummary(p);
+        if (ok) done++;
+      }
+      if (done > 0) {
+        saveState();
+        renderInspector();
+        showToast(`${done}件の論文にAI要約を追加しました`);
+      } else {
+        showToast('AI要約を生成できませんでした');
+      }
+    }
+
+    // =========================================================================
     // Event Wiring & Boot
     // =========================================================================
     document.addEventListener('DOMContentLoaded', () => {
@@ -2953,6 +3303,10 @@ function jsonOut_(obj) {
         renderMap();
       });
 
+      document.getElementById('toggleFocusMode').addEventListener('change', (e) => {
+        state.focusMode = e.target.checked;
+        renderMap();
+      });
       document.getElementById('toggleQuotePills').addEventListener('change', (e) => {
         state.showQuotePills = e.target.checked;
         renderMap();
@@ -2990,6 +3344,7 @@ function jsonOut_(obj) {
       document.getElementById('btnDataIO').addEventListener('click', openDataIOModal);
       document.getElementById('btnRefreshOpenAlex').addEventListener('click', () => syncWithOpenAlex({ autoLink: false }));
       document.getElementById('btnAutoLinkOpenAlex').addEventListener('click', () => syncWithOpenAlex({ autoLink: true }));
+      document.getElementById('btnBatchAiSummary').addEventListener('click', batchGenerateAiSummaries);
 
       document.getElementById('btnCloseModal').addEventListener('click', closeModal);
       document.getElementById('modalBackdrop').addEventListener('click', (e) => {
