@@ -88,6 +88,9 @@
 
     <!-- Action Buttons -->
     <div class="flex flex-wrap items-center gap-1.5">
+      <button id="btnUndo" type="button" disabled class="px-2.5 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed" title="1つ前の操作に戻す (Ctrl+Z / Cmd+Z)">
+        ↩ 元に戻す
+      </button>
       <button id="btnAddPaper" type="button" class="px-3 py-1.5 text-xs font-semibold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg shadow-sm transition flex items-center gap-1">
         <span>+</span> 論文を追加
       </button>
@@ -281,10 +284,101 @@
       docLang: 'en'
     };
 
+    let undoStack = [];
+    let _lastSavedSnapshot = '';
+
+    function updateUndoButton() {
+      const btn = document.getElementById('btnUndo');
+      if (btn) btn.disabled = undoStack.length === 0;
+    }
+
+    function undoLastAction() {
+      if (undoStack.length === 0) {
+        showToast('これ以上戻せる操作がありません');
+        return;
+      }
+      try {
+        const prev = JSON.parse(undoStack.pop());
+        state.themes = prev.themes || [];
+        state.papers = prev.papers || [];
+        state.links = prev.links || [];
+        if (state.selectedPaperId && !state.papers.some(p => p.id === state.selectedPaperId)) {
+          state.selectedPaperId = state.papers[0]?.id || null;
+        }
+        if (state.selectedLinkId && !state.links.some(l => l.id === state.selectedLinkId)) {
+          state.selectedLinkId = null;
+        }
+        _lastSavedSnapshot = JSON.stringify({ themes: state.themes, papers: state.papers, links: state.links });
+        saveState({ skipUndo: true });
+        updateUndoButton();
+        renderMap();
+        renderInspector();
+        showToast('1つ前の状態に戻しました');
+      } catch (e) {
+        showToast('元に戻せませんでした');
+      }
+    }
+
+    async function translateText(text, targetLang) {
+      const clean = (text || '').trim();
+      if (!clean) return '';
+      const sl = targetLang === 'ja' ? 'en' : 'ja';
+      try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${targetLang}&dt=t&q=${encodeURIComponent(clean.slice(0, 1800))}`;
+        const resp = await fetch(url);
+        if (!resp.ok) return '';
+        const data = await resp.json();
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          return data[0].map(seg => seg[0] || '').join('');
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    async function autoTranslateVisibleInspector() {
+      let changed = false;
+      const tasks = [];
+
+      if (state.selectedLinkId) {
+        const lnk = state.links.find(l => l.id === state.selectedLinkId);
+        if (lnk) {
+          if ((state.docLang === 'ja' || state.docLang === 'both') && !lnk.quoteJa && lnk.quote) {
+            tasks.push(translateText(lnk.quote, 'ja').then(res => { if (res) { lnk.quoteJa = res; changed = true; } }));
+          } else if ((state.docLang === 'en' || state.docLang === 'both') && !lnk.quote && lnk.quoteJa) {
+            tasks.push(translateText(lnk.quoteJa, 'en').then(res => { if (res) { lnk.quote = res; changed = true; } }));
+          }
+        }
+      } else if (state.selectedPaperId) {
+        const p = state.papers.find(x => x.id === state.selectedPaperId);
+        if (p) {
+          if ((state.docLang === 'ja' || state.docLang === 'both') && !p.summary && p.summaryEn) {
+            tasks.push(translateText(p.summaryEn, 'ja').then(res => { if (res) { p.summary = res; changed = true; } }));
+          } else if ((state.docLang === 'en' || state.docLang === 'both') && !p.summaryEn && p.summary) {
+            tasks.push(translateText(p.summary, 'en').then(res => { if (res) { p.summaryEn = res; changed = true; } }));
+          }
+          const relLinks = state.links.filter(l => l.sourceId === p.id || l.targetId === p.id).slice(0, 6);
+          relLinks.forEach(lnk => {
+            if ((state.docLang === 'ja' || state.docLang === 'both') && !lnk.quoteJa && lnk.quote) {
+              tasks.push(translateText(lnk.quote, 'ja').then(res => { if (res) { lnk.quoteJa = res; changed = true; } }));
+            }
+          });
+        }
+      }
+
+      if (tasks.length > 0) {
+        await Promise.all(tasks);
+        if (changed) {
+          saveState({ skipUndo: true });
+          renderInspector();
+        }
+      }
+    }
+
     function setDocLang(lang) {
       state.docLang = lang;
       updateDocLangButtons();
       renderInspector();
+      autoTranslateVisibleInspector();
     }
 
     function updateDocLangButtons() {
@@ -337,13 +431,29 @@
       state.links = def.links;
     }
 
-    function saveState({ skipCloud = false } = {}) {
+    function initUndoSnapshot() {
+      _lastSavedSnapshot = JSON.stringify({
+        themes: state.themes,
+        papers: state.papers,
+        links: state.links
+      });
+      updateUndoButton();
+    }
+
+    function saveState({ skipCloud = false, skipUndo = false } = {}) {
+      const nextSnap = JSON.stringify({
+        themes: state.themes,
+        papers: state.papers,
+        links: state.links
+      });
+      if (!skipUndo && _lastSavedSnapshot && nextSnap !== _lastSavedSnapshot) {
+        undoStack.push(_lastSavedSnapshot);
+        if (undoStack.length > 30) undoStack.shift();
+      }
+      _lastSavedSnapshot = nextSnap;
+      updateUndoButton();
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          themes: state.themes,
-          papers: state.papers,
-          links: state.links
-        }));
+        localStorage.setItem(STORAGE_KEY, nextSnap);
       } catch (e) {
         // Ignore storage errors
       }
@@ -790,6 +900,16 @@
             <blockquote class="p-3.5 rounded-xl bg-slate-900 text-slate-100 text-xs leading-relaxed border-l-4 border-amber-400">
               ${renderBilingualBlock(lnk.quote, lnk.quoteJa, '引用文言が未登録です')}
             </blockquote>
+            <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <button id="btnFetchS2Quote" type="button" class="px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-lg transition">
+                Semantic Scholarから引用文言を自動取得
+              </button>
+              ${tgt?.doi ? `
+                <a href="https://doi.org/${encodeURIComponent(tgt.doi)}" target="_blank" rel="noopener noreferrer"
+                  class="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition">
+                  引用元の本文(DOI)を開く ↗
+                </a>` : ''}
+            </div>
           </div>
 
           ${lnk.note ? `
@@ -811,6 +931,20 @@
           });
         });
 
+        document.getElementById('btnFetchS2Quote')?.addEventListener('click', async () => {
+          const btn = document.getElementById('btnFetchS2Quote');
+          if (btn) btn.textContent = '取得中...';
+          const count = await enrichLinksWithSemanticScholar([lnk]);
+          if (count > 0) {
+            saveState();
+            renderMap();
+            renderInspector();
+            showToast('Semantic Scholarから引用文言を取得しました');
+          } else {
+            if (btn) btn.textContent = 'Semantic Scholarから引用文言を自動取得';
+            showToast('この論文の本文引用文言は公開データに見つかりませんでした（DOIから直接ご確認いただけます）');
+          }
+        });
         document.getElementById('btnEditSelectedLink')?.addEventListener('click', () => openLinkModal(lnk));
         document.getElementById('btnDeleteSelectedLink')?.addEventListener('click', () => {
           state.links = state.links.filter(l => l.id !== lnk.id);
@@ -896,16 +1030,18 @@
               </div>
             </div>
 
-            ${(p.summary || p.summaryEn) ? `
-              <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed space-y-1">
-                <div class="flex items-center justify-between">
-                  <span class="text-[10px] font-bold text-slate-400 uppercase">概要 / Abstract</span>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed space-y-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] font-bold text-slate-400 uppercase">概要 / Abstract</span>
+                <div class="flex items-center gap-1">
+                  ${(!p.summary && !p.summaryEn) ? `<button type="button" id="btnFetchSummary" class="px-2 py-0.5 text-[10px] font-bold bg-sky-50 border border-sky-200 hover:bg-sky-100 text-sky-800 rounded transition">概要を自動取得</button>` : ''}
                   <button type="button" data-quick-lang class="px-1.5 py-0.5 text-[10px] font-bold bg-white border border-slate-200 hover:border-amber-400 text-slate-700 rounded transition">
                     ${state.docLang === 'en' ? 'JAへ' : (state.docLang === 'ja' ? '日英' : 'ENへ')}
                   </button>
                 </div>
-                <div>${renderBilingualBlock(p.summaryEn, p.summary)}</div>
-              </div>` : ''}
+              </div>
+              <div>${(p.summary || p.summaryEn) ? renderBilingualBlock(p.summaryEn, p.summary) : '<span class="text-slate-400">概要が未登録です（「概要を自動取得」で取得できます）</span>'}</div>
+            </div>
 
             <div class="grid grid-cols-2 gap-2 pt-1">
               <button id="btnExpandCitedBy" type="button" class="px-2.5 py-2 text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl transition text-center leading-tight">
@@ -1015,6 +1151,20 @@
             showToast('タイトルをコピーしました。Paperpileの検索欄に貼り付けてください');
           }
           window.open('https://paperpile.com/app', '_blank', 'noopener,noreferrer');
+        });
+        document.getElementById('btnFetchSummary')?.addEventListener('click', async () => {
+          const btn = document.getElementById('btnFetchSummary');
+          if (btn) btn.textContent = '取得中...';
+          const ok = await fetchAbstractFallback(p);
+          if (ok) {
+            saveState({ skipUndo: true });
+            renderInspector();
+            if (state.docLang === 'ja' || state.docLang === 'both') autoTranslateVisibleInspector();
+            showToast('概要を取得しました');
+          } else {
+            if (btn) btn.textContent = '概要を自動取得';
+            showToast('公開データベースから概要を取得できませんでした');
+          }
         });
         document.getElementById('btnExpandCitedBy')?.addEventListener('click', () => openExpandPaperModal(p, 'citedBy'));
         document.getElementById('btnExpandRefs')?.addEventListener('click', () => openExpandPaperModal(p, 'refs'));
@@ -1189,6 +1339,10 @@
               document.getElementById('fCitations').value = w.cited_by_count ?? 0;
               document.getElementById('fJournal').value = w.primary_location?.source?.display_name || '';
               document.getElementById('fDoi').value = (w.doi || '').replace('https://doi.org/', '');
+              const absText = reconstructAbstract(w.abstract_inverted_index);
+              if (absText && !document.getElementById('fSummaryEn').value) {
+                document.getElementById('fSummaryEn').value = absText;
+              }
               const suggestedTheme = autoAssignThemeForPaper({
                 title: w.title || '',
                 oaTopics: (w.topics || []).map(t => t.display_name),
@@ -1778,6 +1932,42 @@
       return words.filter(Boolean).join(' ');
     }
 
+    async function fetchAbstractFallback(p) {
+      if (p.summaryEn && p.summaryEn.trim()) return true;
+      // 1. Try OpenAlex if not yet fetched
+      if (p.doi && p.doi.trim()) {
+        const cleanDoi = p.doi.trim().replace(/^https?:\/\/doi\.org\//i, '');
+        try {
+          const oaResp = await fetch(`https://api.openalex.org/works/https://doi.org/${encodeURIComponent(cleanDoi)}`);
+          if (oaResp.ok) {
+            const oa = await oaResp.json();
+            const abs = reconstructAbstract(oa.abstract_inverted_index);
+            if (abs) { p.summaryEn = abs; return true; }
+          }
+        } catch (e) {}
+        // 2. Try Semantic Scholar (abstract + tldr)
+        try {
+          const s2Resp = await fetch(`https://api.semanticscholar.org/graph/v1/paper/DOI:${encodeURIComponent(cleanDoi)}?fields=abstract,tldr`);
+          if (s2Resp.ok) {
+            const s2 = await s2Resp.json();
+            const abs = s2.abstract || s2.tldr?.text || '';
+            if (abs) { p.summaryEn = abs; return true; }
+          }
+        } catch (e) {}
+        // 3. Try Crossref abstract
+        try {
+          const crResp = await fetch(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`);
+          if (crResp.ok) {
+            const cr = await crResp.json();
+            const rawAbs = cr.message?.abstract || '';
+            const cleanAbs = rawAbs.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            if (cleanAbs) { p.summaryEn = cleanAbs; return true; }
+          }
+        } catch (e) {}
+      }
+      return false;
+    }
+
     async function syncWithOpenAlex({ autoLink = true } = {}) {
       if (state.papers.length === 0) {
         showToast('論文が登録されていません');
@@ -1858,14 +2048,87 @@
         });
       }
 
-      if (updated > 0 || newLinks > 0) {
+      let s2Filled = 0;
+      if (autoLink) {
+        const emptyLinks = state.links.filter(l => !(l.quote || '').trim());
+        if (emptyLinks.length > 0) {
+          s2Filled = await enrichLinksWithSemanticScholar(emptyLinks);
+        }
+      }
+
+      if (updated > 0 || newLinks > 0 || s2Filled > 0) {
         saveState();
         renderMap();
         renderInspector();
-        showToast(`OpenAlex同期完了: 引用数 ${updated}件更新 ／ 新規引用線 ${newLinks}本を自動結線`);
+        showToast(`同期完了: 引用数 ${updated}件更新 ／ 新規引用線 ${newLinks}本 ／ 引用文言 ${s2Filled}件取得`);
       } else {
         showToast('OpenAlexから新しい情報を取得できませんでした');
       }
+    }
+
+    async function enrichLinksWithSemanticScholar(targetLinks) {
+      if (!targetLinks || targetLinks.length === 0) return 0;
+      // Group links by citing paper (targetId) so we make at most 1 S2 request per citing paper
+      const byCiter = {};
+      targetLinks.forEach(l => {
+        if (!byCiter[l.targetId]) byCiter[l.targetId] = [];
+        byCiter[l.targetId].push(l);
+      });
+
+      let filled = 0;
+      const intentMap = { methodology: 'method', result: 'comparison', background: 'background' };
+
+      for (const [citerId, links] of Object.entries(byCiter)) {
+        const citer = state.papers.find(p => p.id === citerId);
+        if (!citer) continue;
+        try {
+          let paperParam = '';
+          if (citer.doi && citer.doi.trim()) {
+            paperParam = `DOI:${encodeURIComponent(citer.doi.trim().replace(/^https?:\/\/doi\.org\//i, ''))}`;
+          } else if (citer.title) {
+            const sr = await fetch(`https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(citer.title)}&fields=paperId&limit=1`);
+            if (sr.ok) {
+              const sj = await sr.json();
+              if (sj.data?.[0]?.paperId) paperParam = sj.data[0].paperId;
+            }
+          }
+          if (!paperParam) continue;
+
+          const resp = await fetch(`https://api.semanticscholar.org/graph/v1/paper/${paperParam}/references?fields=contexts,intents,citedPaper.externalIds,citedPaper.title&limit=500`);
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const refs = json.data || [];
+
+          links.forEach(lnk => {
+            const cited = state.papers.find(p => p.id === lnk.sourceId);
+            if (!cited) return;
+            const cDoi = (cited.doi || '').trim().replace(/^https?:\/\/doi\.org\//i, '').toLowerCase();
+            const cTitle = (cited.title || '').trim().toLowerCase();
+
+            const match = refs.find(r => {
+              const cp = r.citedPaper;
+              if (!cp) return false;
+              const rDoi = (cp.externalIds?.DOI || '').toLowerCase();
+              const rTitle = (cp.title || '').toLowerCase();
+              return (cDoi && rDoi && cDoi === rDoi) || (cTitle && rTitle && (rTitle === cTitle || rTitle.includes(cTitle.slice(0, 40))));
+            });
+
+            if (match && Array.isArray(match.contexts) && match.contexts.length > 0) {
+              lnk.quote = match.contexts.join(' / ');
+              if (Array.isArray(match.intents) && match.intents[0] && intentMap[match.intents[0]]) {
+                lnk.intent = intentMap[match.intents[0]];
+              }
+              if (lnk.section && lnk.section.includes('OpenAlex')) {
+                lnk.section = 'Body Text (Semantic Scholar自動抽出)';
+              }
+              filled++;
+            }
+          });
+        } catch (e) {
+          // Gracefully ignore S2 rate limit or CORS errors for paywalled papers
+        }
+      }
+      return filled;
     }
 
     // =========================================================================
@@ -2223,7 +2486,16 @@
         return;
       }
 
-      candidates = candidates.filter(w => w && w.title);
+      const baseYear = Number(paper.year);
+      candidates = candidates.filter(w => {
+        if (!w || !w.title) return false;
+        if (w.id && paper.openAlexId && w.id === paper.openAlexId) return false;
+        if (baseYear && w.publication_year) {
+          if (!isCitedBy && Number(w.publication_year) > baseYear) return false;
+          if (isCitedBy && Number(w.publication_year) < baseYear) return false;
+        }
+        return true;
+      });
       if (candidates.length === 0) {
         document.getElementById('modalBody').innerHTML = `
           <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
@@ -2338,6 +2610,11 @@
               xOffset: 0
             };
             state.papers.push(targetPaper);
+            if (!targetPaper.summaryEn && targetPaper.doi) {
+              fetchAbstractFallback(targetPaper).then(ok => {
+                if (ok) { saveState({ skipUndo: true }); renderInspector(); }
+              });
+            }
             addedPapers++;
           }
 
@@ -2359,11 +2636,22 @@
           }
         });
 
+        const newCreatedLinks = state.links.slice(-addedLinks);
         saveState();
         closeModal();
         renderMap();
         renderInspector();
-        showToast(`論文 ${addedPapers}件・引用線 ${addedLinks}本を追加しました`);
+        showToast(`論文 ${addedPapers}件・引用線 ${addedLinks}本を追加（引用文言を自動取得中...）`);
+        if (addedLinks > 0) {
+          enrichLinksWithSemanticScholar(newCreatedLinks).then(s2Count => {
+            if (s2Count > 0) {
+              saveState();
+              renderMap();
+              renderInspector();
+              showToast(`Semantic Scholarから引用文言 ${s2Count}件を自動取得しました`);
+            }
+          });
+        }
       });
     }
 
@@ -2632,6 +2920,7 @@ function jsonOut_(obj) {
     document.addEventListener('DOMContentLoaded', () => {
       loadSyncConfig();
       loadState();
+      initUndoSnapshot();
       updateDocLangButtons();
       renderMap();
       renderInspector();
@@ -2682,6 +2971,16 @@ function jsonOut_(obj) {
         renderMap();
       });
 
+      document.getElementById('btnUndo').addEventListener('click', undoLastAction);
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+          const tag = (document.activeElement?.tagName || '').toLowerCase();
+          if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+            e.preventDefault();
+            undoLastAction();
+          }
+        }
+      });
       document.getElementById('btnAddPaper').addEventListener('click', () => openPaperModal(null));
       document.getElementById('btnAddLink').addEventListener('click', () => openLinkModal(null));
       document.getElementById('btnManageThemes').addEventListener('click', openThemesModal);
