@@ -2360,10 +2360,14 @@
       ].filter(Boolean).join(' ').toLowerCase();
 
       const semanticGroups = [
-        { themeHints: ['レビュー', '理論', 'review', 'theory', '感度'], keywords: ['review', 'optimization', 'sensitivity', 'theoretical', 'framework', 'limit', 'overview', 'survey', 'レビュー', '理論'] },
-        { themeHints: ['手法', '実験', '回路', 'マイクロ波', '光学', 'パルス', 'method', 'setup'], keywords: ['method', 'protocol', 'coherent', 'rabi', 'echo', 'ramsey', 'pulse', 'microwave', 'resonator', 'antenna', 'confocal', 'optical', 'readout', 'odmr', '手法', '実験', '制御'] },
-        { themeHints: ['応用', '展開', 'イメージング', '生体', '計測', 'app', 'sensing'], keywords: ['imaging', 'mapping', 'biological', 'cell', 'nanoscale', 'sensing', 'magnetometry', 'magnetometer', 'application', 'sensor', '応用', '計測', 'イメージング'] },
-        { themeHints: ['基礎', '先行', '材料', '欠陥', 'foundation', 'basic'], keywords: ['observation', 'single', 'defect', 'center', 'implantation', 'diamond', 'spin', 'foundation', '基礎', '先行'] }
+        { themeHints: ['マイクロ波', '共振器', '回路', 'microwave', 'resonator', 'antenna'], keywords: ['microwave', 'resonator', 'antenna', 'coplanar', 'waveguide', 'cavity', 'stripline', 'hfss', 's11', 'rf ', 'ghZ', 'マイクロ波', '共振器'] },
+        { themeHints: ['パルス', 'シーケンス', 'デカップリング', 'pulse', 'echo', 'ramsey'], keywords: ['pulse', 'echo', 'echoes', 'ramsey', 'rabi', 'cpmg', 'xy8', 'dynamical decoupling', 'nmr', 'coherent', 'nutation', 'gyrating', 'パルス', 'エコー'] },
+        { themeHints: ['光学', '読み出し', 'レーザー', 'optical', 'laser', 'readout'], keywords: ['optical', 'confocal', 'fluorescence', 'photoconductivity', 'laser', 'electro-optics', 'luminescence', 'readout', 'odmr', 'zpl', 'phonon', '光学', '読み出し'] },
+        { themeHints: ['材料', '表面', '欠陥', 'ダイヤモンド', 'material', 'surface', 'defect'], keywords: ['diamond', 'defect', 'implantation', 'anneal', 'surface', 'strain', 'isotopically', '13c', '12c', 'nanocrystal', 'cvd', '材料', '表面', '欠陥'] },
+        { themeHints: ['単一', 'ナノ', 'single', 'nano'], keywords: ['single', 'individual', 'nanoscale', 'nanometre', 'scanning probe', 'afm', '単一', 'ナノ'] },
+        { themeHints: ['アンサンブル', '広視野', '高感度', 'ensemble', 'widefield'], keywords: ['ensemble', 'widefield', 'femtotesla', 'broadband', 'bulk', 'high-sensitivity', 'アンサンブル', '広視野', '高感度'] },
+        { themeHints: ['イメージング', '応用', '生体', '計測', 'imaging', 'sensing', 'app'], keywords: ['imaging', 'mapping', 'biological', 'cell', 'magnetometry', 'magnetometer', 'sensor', 'sensing', '応用', '計測'] },
+        { themeHints: ['レビュー', '理論', '基礎', 'review', 'theory', 'foundation'], keywords: ['review', 'optimization', 'sensitivity', 'theoretical', 'framework', 'limit', 'quantal', 'phase factors', 'overview', 'survey', 'レビュー', '理論', '基礎'] }
       ];
 
       let bestId = fallbackThemeId || state.themes[0].id;
@@ -2541,9 +2545,12 @@
                     <input id="customAxesInput" type="text" value="${escapeHtml(customAxesText)}" class="flex-1 px-2.5 py-1 text-[11px] bg-white border border-emerald-300 rounded-lg" />
                     <button type="button" id="btnRunCustomAxes" class="px-2.5 py-1 text-[11px] font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg shrink-0">振り分け</button>
                   </div>
-                  <div class="flex items-center justify-between pt-0.5">
-                    <span class="text-[10px] text-emerald-800">Gemini APIキー設定済みの場合は論文内容から自動命名も可能</span>
-                    <button type="button" id="btnAiAutoCluster" class="px-2.5 py-1 text-[11px] font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-lg shrink-0">✨ AIで細かく自動分類</button>
+                  <div class="flex flex-wrap items-center justify-between gap-1.5 pt-0.5">
+                    <span class="text-[10px] text-emerald-800">Gemini APIキーを設定すると論文内容から自動命名も可能</span>
+                    <div class="flex items-center gap-1.5">
+                      <button type="button" id="btnOpenAiKeyFromModal" class="px-2 py-1 text-[11px] font-semibold bg-white border border-violet-300 hover:bg-violet-50 text-violet-800 rounded-lg shrink-0">⚙ APIキー設定</button>
+                      <button type="button" id="btnAiAutoCluster" class="px-2.5 py-1 text-[11px] font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-lg shrink-0">✨ AIで細かく自動分類</button>
+                    </div>
                   </div>
                 </div>` : ''}
 
@@ -2619,6 +2626,7 @@
           mount();
         });
 
+        document.getElementById('btnOpenAiKeyFromModal')?.addEventListener('click', openAiSettingsModal);
         document.getElementById('btnAiAutoCluster')?.addEventListener('click', async () => {
           const apiKey = getGeminiApiKey();
           if (!apiKey) {
