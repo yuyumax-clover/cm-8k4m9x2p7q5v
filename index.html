@@ -446,20 +446,24 @@
     }
 
     function initUndoSnapshot() {
-      _lastSavedSnapshot = JSON.stringify({
-        themes: state.themes,
-        papers: state.papers,
-        links: state.links
-      });
+      _lastSavedSnapshot = JSON.stringify(serializeCleanState());
       updateUndoButton();
     }
 
-    function saveState({ skipCloud = false, skipUndo = false } = {}) {
-      const nextSnap = JSON.stringify({
-        themes: state.themes,
-        papers: state.papers,
-        links: state.links
+    function serializeCleanState() {
+      const cleanPapers = state.papers.map(p => {
+        const { _referencedWorks, _slotKey, ...rest } = p;
+        return rest;
       });
+      return {
+        themes: state.themes,
+        papers: cleanPapers,
+        links: state.links
+      };
+    }
+
+    function saveState({ skipCloud = false, skipUndo = false } = {}) {
+      const nextSnap = JSON.stringify(serializeCleanState());
       if (!skipUndo && _lastSavedSnapshot && nextSnap !== _lastSavedSnapshot) {
         undoStack.push(_lastSavedSnapshot);
         if (undoStack.length > 30) undoStack.shift();
@@ -2945,11 +2949,7 @@
         const payload = {
           token: syncConfig.token || '',
           updatedAt: new Date().toISOString(),
-          data: {
-            themes: state.themes,
-            papers: state.papers,
-            links: state.links
-          }
+          data: serializeCleanState()
         };
         const resp = await fetch(syncConfig.gasUrl, {
           method: 'POST',
@@ -2983,6 +2983,10 @@
         const res = await resp.json();
         if (res.status !== 'ok') throw new Error(res.message || 'Read error');
         if (res.data && Array.isArray(res.data.themes) && Array.isArray(res.data.papers) && Array.isArray(res.data.links)) {
+          if (silent && state.papers.length > 0 && res.data.papers.length === 0) {
+            setSyncDot('ok');
+            return true;
+          }
           state.themes = res.data.themes;
           state.papers = res.data.papers;
           state.links = res.data.links;
@@ -3016,7 +3020,15 @@ function doGet(e) {
   if (SECRET_TOKEN && token !== SECRET_TOKEN) {
     return jsonOut_({ status: 'error', message: 'Invalid token' });
   }
-  const raw = getSheet_().getRange('A1').getValue();
+  const sheet = getSheet_();
+  const lastRow = Math.max(1, sheet.getLastRow());
+  const vals = sheet.getRange(1, 1, lastRow, 1).getValues().map(r => r[0]);
+  let raw = '';
+  for (let i = 0; i < vals.length; i++) {
+    const v = String(vals[i] || '');
+    if (v.startsWith('Updated:')) break;
+    raw += v;
+  }
   const data = raw ? JSON.parse(raw) : null;
   return jsonOut_({ status: 'ok', data });
 }
@@ -3027,8 +3039,16 @@ function doPost(e) {
     return jsonOut_({ status: 'error', message: 'Invalid token' });
   }
   const sheet = getSheet_();
-  sheet.getRange('A1').setValue(JSON.stringify(body.data || {}));
-  sheet.getRange('A2').setValue('Updated: ' + (body.updatedAt || new Date().toISOString()));
+  const str = JSON.stringify(body.data || {});
+  const chunkSize = 40000;
+  const rows = [];
+  for (let i = 0; i < str.length; i += chunkSize) {
+    rows.push([str.slice(i, i + chunkSize)]);
+  }
+  if (rows.length === 0) rows.push(['{}']);
+  rows.push(['Updated: ' + (body.updatedAt || new Date().toISOString())]);
+  sheet.clearContents();
+  sheet.getRange(1, 1, rows.length, 1).setValues(rows);
   return jsonOut_({ status: 'ok' });
 }
 
