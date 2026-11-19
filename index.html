@@ -3311,7 +3311,11 @@ function jsonOut_(obj) {
             generationConfig: { responseMimeType: 'application/json' }
           })
         });
-        if (resp.status === 404) return { notFound: true };
+        if (resp.status === 404) return { retryable: true, status: 404 };
+        if (resp.status === 503 || resp.status === 429) {
+          await new Promise(r => setTimeout(r, 700));
+          return { retryable: true, status: resp.status };
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         _cachedGeminiModel = cleanId;
@@ -3339,7 +3343,7 @@ function jsonOut_(obj) {
         const res = await tryModel(m.name);
         if (res && res.parsed) return res.parsed;
       }
-      throw new Error('HTTP 404 (利用可能なGeminiモデルが見つかりませんでした)');
+      throw new Error('Geminiサーバーが混雑しています (HTTP 503)。数秒後にもう一度お試しください');
     }
 
     async function generatePaperAiSummary(p) {
