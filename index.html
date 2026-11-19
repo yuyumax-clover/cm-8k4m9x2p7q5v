@@ -1104,11 +1104,13 @@
         panel.innerHTML = `
           <div class="space-y-3">
             <div class="flex items-start justify-between gap-2">
-              <div class="inline-flex items-center gap-1.5 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200 max-w-[240px]">
+              <div class="inline-flex items-center gap-1 bg-slate-100 rounded-lg px-1.5 py-1 border border-slate-200 max-w-[260px]">
+                <button id="btnShiftThemeLeft" type="button" class="px-1 text-[10px] font-bold text-slate-600 hover:text-slate-900 hover:bg-white rounded" title="左のレーンへ移動">◀</button>
                 <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${escapeHtml(theme?.color || '#64748b')}"></span>
-                <select id="selInspectorTheme" class="bg-transparent text-[11px] font-bold text-slate-800 focus:outline-none truncate cursor-pointer" title="この論文の横軸レーンを変更">
+                <select id="selInspectorTheme" class="bg-transparent text-[11px] font-bold text-slate-800 focus:outline-none truncate cursor-pointer min-w-0" title="この論文の横軸レーンを変更">
                   ${state.themes.map(t => `<option value="${t.id}" ${t.id === p.themeId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}
                 </select>
+                <button id="btnShiftThemeRight" type="button" class="px-1 text-[10px] font-bold text-slate-600 hover:text-slate-900 hover:bg-white rounded" title="右のレーンへ移動">▶</button>
               </div>
               <div class="flex items-center gap-1 shrink-0">
                 <button id="btnEditPaper" type="button" class="px-2 py-1 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg">編集</button>
@@ -1294,6 +1296,19 @@
           const newT = state.themes.find(t => t.id === p.themeId);
           showToast(`「${newT?.name || ''}」へ移動しました`);
         });
+        const shiftLane = (delta) => {
+          const curIdx = state.themes.findIndex(t => t.id === p.themeId);
+          const nextIdx = curIdx + delta;
+          if (nextIdx < 0 || nextIdx >= state.themes.length) return;
+          p.themeId = state.themes[nextIdx].id;
+          p.xOffset = 0;
+          saveState();
+          renderMap();
+          renderInspector();
+          showToast(`「${state.themes[nextIdx].name}」へ移動しました`);
+        };
+        document.getElementById('btnShiftThemeLeft')?.addEventListener('click', () => shiftLane(-1));
+        document.getElementById('btnShiftThemeRight')?.addEventListener('click', () => shiftLane(1));
         document.getElementById('btnEditPaper')?.addEventListener('click', () => openPaperModal(p));
         document.getElementById('btnDeletePaper')?.addEventListener('click', () => {
           state.papers = state.papers.filter(x => x.id !== p.id);
@@ -2768,7 +2783,9 @@
               id: p.id,
               title: p.title,
               year: p.year,
-              abstract: (p.summaryEn || p.summary || '').slice(0, 260)
+              journal: p.journal || '',
+              topics: (p.oaTopics || []).slice(0, 3),
+              abstract: (p.summaryEn || p.summary || '').slice(0, 700)
             }));
             const guideText = (document.getElementById('aiGuideInput')?.value || '').trim();
             const guidePart = guideText ? ` User guidance: "${guideText}".` : '';
@@ -2806,7 +2823,9 @@
               id: p.id,
               title: p.title,
               year: p.year,
-              abstract: (p.summaryEn || p.summary || '').slice(0, 300)
+              journal: p.journal || '',
+              topics: (p.oaTopics || []).slice(0, 3),
+              abstract: (p.summaryEn || p.summary || '').slice(0, 700)
             }));
             const guidePart = aiGuideText ? ` Follow this user instruction strictly: "${aiGuideText}".` : '';
             const prompt = `Group these academic papers into 5 to 8 fine-grained, research-specific Japanese theme lanes for a citation timeline map.${guidePart} Return strictly valid JSON: {"themes":[{"name":"Japanese lane name","paperIds":["id1",...]}]}. Every paper id must appear in exactly one theme.\nPapers: ${JSON.stringify(papersBrief)}`;
