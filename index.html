@@ -84,6 +84,14 @@
         <option value="comparison">比較・ベンチマーク</option>
         <option value="extension">課題指摘・拡張</option>
       </select>
+
+      <select id="statusFilter" class="text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400">
+        <option value="all">すべての印</option>
+        <option value="read">✅ 読了のみ</option>
+        <option value="important">★ 大事のみ</option>
+        <option value="review">📌 要確認のみ</option>
+        <option value="unread">未読のみ</option>
+      </select>
     </div>
 
     <!-- Action Buttons -->
@@ -290,7 +298,8 @@
       zoom: 1,
       showQuotePills: true,
       docLang: 'en',
-      focusMode: false
+      focusMode: false,
+      statusFilter: 'all'
     };
 
     let undoStack = [];
@@ -500,7 +509,13 @@
         return inLink || inSrc || inTgt;
       });
 
+      const sf = state.statusFilter || 'all';
       const visiblePapers = state.papers.filter(p => {
+        const marks = p.marks || {};
+        if (sf === 'read' && !marks.read) return false;
+        if (sf === 'important' && !marks.important) return false;
+        if (sf === 'review' && !marks.review) return false;
+        if (sf === 'unread' && marks.read) return false;
         if (!q && intent === 'all') return true;
         if (intent !== 'all') {
           const connected = matchingLinks.some(l => l.sourceId === p.id || l.targetId === p.id);
@@ -825,11 +840,16 @@
               </div>
             </div>
             <div class="flex items-center justify-between gap-1 pt-1 border-t border-slate-200/80 text-[10px]">
-              <span class="inline-flex items-center gap-1 font-bold ${tier.badge} px-1.5 py-0.5 rounded">
-                引用 ${Number(p.citations || 0).toLocaleString()}
-              </span>
-              <span class="text-slate-500 font-medium">
-                被引用 ${inCount} · 参照 ${outCount}
+              <div class="flex items-center gap-1 min-w-0">
+                <span class="inline-flex items-center font-bold ${tier.badge} px-1.5 py-0.5 rounded shrink-0">
+                  引用 ${Number(p.citations || 0).toLocaleString()}
+                </span>
+                ${p.marks?.read ? `<span title="読了" class="inline-flex items-center px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">✅</span>` : ''}
+                ${p.marks?.important ? `<span title="大事" class="inline-flex items-center px-1 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">★</span>` : ''}
+                ${p.marks?.review ? `<span title="要確認" class="inline-flex items-center px-1 py-0.5 rounded bg-sky-100 text-sky-800 font-bold">📌</span>` : ''}
+              </div>
+              <span class="text-slate-500 font-medium shrink-0">
+                被 ${inCount} · 参 ${outCount}
               </span>
             </div>
           </div>`;
@@ -1082,6 +1102,18 @@
               </div>
             </div>
 
+            <div class="flex flex-wrap items-center gap-1.5 pt-1">
+              <button type="button" data-mark-toggle="read" class="px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition ${p.marks?.read ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-400'}">
+                ✅ 読了
+              </button>
+              <button type="button" data-mark-toggle="important" class="px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition ${p.marks?.important ? 'bg-amber-500 text-white border-amber-500 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:border-amber-400'}">
+                ★ 大事
+              </button>
+              <button type="button" data-mark-toggle="review" class="px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition ${p.marks?.review ? 'bg-sky-600 text-white border-sky-600 shadow-xs' : 'bg-white text-slate-600 border-slate-200 hover:border-sky-400'}">
+                📌 要確認
+              </button>
+            </div>
+
             <div class="grid grid-cols-3 gap-2 pt-1">
               <div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-center">
                 <div class="text-[10px] font-semibold text-amber-700">総引用数</div>
@@ -1220,6 +1252,16 @@
           });
         });
 
+        panel.querySelectorAll('[data-mark-toggle]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const key = btn.getAttribute('data-mark-toggle');
+            if (!p.marks) p.marks = {};
+            p.marks[key] = !p.marks[key];
+            saveState();
+            renderMap();
+            renderInspector();
+          });
+        });
         document.getElementById('btnEditPaper')?.addEventListener('click', () => openPaperModal(p));
         document.getElementById('btnDeletePaper')?.addEventListener('click', () => {
           state.papers = state.papers.filter(x => x.id !== p.id);
@@ -1497,6 +1539,7 @@
           paperpileUrl: document.getElementById('fPaperpileUrl').value.trim(),
           summary: document.getElementById('fSummary').value.trim(),
           summaryEn: document.getElementById('fSummaryEn').value.trim(),
+          marks: existing?.marks || {},
           openAlexId: existing?.openAlexId || '',
           oaTopics: existing?.oaTopics || [],
           oaConcepts: existing?.oaConcepts || [],
@@ -3464,6 +3507,11 @@ function jsonOut_(obj) {
 
       document.getElementById('intentFilter').addEventListener('change', (e) => {
         state.intentFilter = e.target.value;
+        renderMap();
+      });
+
+      document.getElementById('statusFilter').addEventListener('change', (e) => {
+        state.statusFilter = e.target.value;
         renderMap();
       });
 
