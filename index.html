@@ -2451,8 +2451,19 @@
       state.themes.forEach(t => {
         let score = 0;
         const tLower = (t.name || '').toLowerCase();
-        // Match tokens from theme name directly
-        tLower.split(/[・\/\s,()（）-]+/).filter(w => w.length >= 2).forEach(tok => {
+        const isNonDiamondLane = /以外|除く|^非/.test(tLower);
+        const isDiamondPaper = /\bdiamond\b|nitrogen[- ]vacancy|\bnv\b|ダイヤモンド/.test(text);
+
+        if (isNonDiamondLane && isDiamondPaper) {
+          score -= 10;
+        }
+        if (!isNonDiamondLane && /nv|ダイヤモンド|diamond/.test(tLower) && isDiamondPaper) {
+          score += 2;
+        }
+
+        // Match tokens from theme name directly (skipping negated prefixes like "ダイヤモンド以外")
+        const cleanedTheme = tLower.replace(/[^・\/\s,()（）-]+(?:以外|を除く)/g, '');
+        cleanedTheme.split(/[・\/\s,()（）-]+/).filter(w => w.length >= 2).forEach(tok => {
           if (text.includes(tok)) score += 3;
         });
         // Match semantic groups associated with this theme name
@@ -2759,7 +2770,9 @@
               year: p.year,
               abstract: (p.summaryEn || p.summary || '').slice(0, 260)
             }));
-            const prompt = `Assign each paper to the single best matching lane from this EXACT list of lanes: ${JSON.stringify(names)}. Do NOT invent new lane names. Return strictly valid JSON: {"assignments":{"paperId":"exact lane name",...}}.\nPapers: ${JSON.stringify(papersBrief)}`;
+            const guideText = (document.getElementById('aiGuideInput')?.value || '').trim();
+            const guidePart = guideText ? ` User guidance: "${guideText}".` : '';
+            const prompt = `Assign each paper to the single best matching lane from this EXACT list of lanes: ${JSON.stringify(names)}. Do NOT invent new lane names. Strictly respect negations in lane names (for example, any paper studying diamond or NV centers MUST NOT be placed into a "ダイヤモンド以外" / non-diamond lane).${guidePart} Return strictly valid JSON: {"assignments":{"paperId":"exact lane name",...}}.\nPapers: ${JSON.stringify(papersBrief)}`;
             const parsed = await callGeminiJson(apiKey, prompt);
             const themes = names.map((name, i) => ({ id: uid('theme'), name, color: palette[i % palette.length] }));
             const nameToId = {};
