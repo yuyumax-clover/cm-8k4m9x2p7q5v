@@ -2442,10 +2442,12 @@
       const ruleSets = {
         tech: [
           { name: 'レビュー・感度理論', color: '#f59e0b', keywords: ['review', 'optimization', 'sensitivity', 'limit', 'theoretical', 'framework', 'レビュー', '理論', '感度限界', '最適化'] },
-          { name: 'マイクロ波・共振器・回路', color: '#ec4899', keywords: ['microwave', 'resonator', 'antenna', 'coplanar', 'waveguide', 'hfss', 'vna', 's11', 'マイクロ波', '共振器', 'アンテナ'] },
-          { name: 'パルス制御・動的デカップリング', color: '#10b981', keywords: ['coherent', 'rabi', 'echo', 'ramsey', 'dynamical decoupling', 'pulse', 'oscillation', 'sequence', 'ラビ', 'エコー', 'コヒーレント', 'パルス'] },
-          { name: '光学系・走査プローブ・読み出し', color: '#0ea5e9', keywords: ['confocal', 'optical', 'fluorescence', 'imaging', 'scanning', 'afm', 'readout', 'odmr', '共焦点', '光学', 'イメージング', '走査'] },
-          { name: '材料・欠陥・基礎スピン', color: '#6366f1', keywords: ['defect', 'implantation', 'anneal', 'isotopically', 'nanocrystal', 'electronic spin', '材料', '欠陥', '基礎'] }
+          { name: 'マイクロ波・共振器・回路', color: '#ec4899', keywords: ['microwave', 'resonator', 'antenna', 'coplanar', 'waveguide', 'hfss', 'vna', 's11', 'rf ', 'マイクロ波', '共振器', 'アンテナ'] },
+          { name: 'パルス制御・動的デカップリング', color: '#10b981', keywords: ['coherent', 'rabi', 'echo', 'ramsey', 'dynamical decoupling', 'xy8', 'cpmg', 'pulse', 'oscillation', 'sequence', 'ラビ', 'エコー', 'コヒーレント', 'パルス'] },
+          { name: '光学系・スピン読み出し', color: '#0ea5e9', keywords: ['confocal', 'optical', 'fluorescence', 'readout', 'odmr', 'spin-to-charge', 'photoluminescence', '共焦点', '光学', '読み出し'] },
+          { name: '走査プローブ・広視野イメージング', color: '#8b5cf6', keywords: ['imaging', 'mapping', 'scanning', 'afm', 'widefield', 'camera', 'イメージング', '走査', '広視野'] },
+          { name: '材料・欠陥生成・表面ノイズ', color: '#14b8a6', keywords: ['defect', 'implantation', 'anneal', 'isotopically', 'nanocrystal', 'surface', 'strain', 'cvd', '材料', '欠陥', '表面'] },
+          { name: '基礎物理・単一スピン', color: '#6366f1', keywords: ['electronic spin', 'individual', 'single', 'ground state', 'hyperfine', '基礎', '単一'] }
         ],
         target: [
           { name: 'レビュー・理論体系化', color: '#f59e0b', keywords: ['review', 'optimization', 'theoretical', 'framework', 'レビュー', '体系', '理論'] },
@@ -2501,27 +2503,58 @@
       }
 
       let currentMode = 'tech';
+      let customAxesText = 'マイクロ波共振器, パルスシーケンス, 光学読み出し, 材料・表面, 単一スピン計測, アンサンブル高感度, レビュー・理論';
       let proposal = buildClassificationProposal(currentMode);
+      const palette = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444'];
+
+      const classifyByCustomAxes = (axesStr) => {
+        const names = axesStr.split(/[,、\n]+/).map(x => x.trim()).filter(Boolean);
+        if (names.length === 0) return buildClassificationProposal('tech');
+        const themes = names.map((name, i) => ({ id: uid('theme'), name, color: palette[i % palette.length] }));
+        const savedThemes = state.themes;
+        state.themes = themes;
+        const assignments = {};
+        state.papers.forEach(p => {
+          assignments[p.id] = autoAssignThemeForPaper(p, themes[0].id);
+        });
+        state.themes = savedThemes;
+        return { themes, assignments };
+      };
 
       const renderProposalBody = () => {
         const hasOaTopics = state.papers.some(p => p.oaTopics && p.oaTopics.length > 0);
         return `
           <div class="space-y-3 text-xs">
-            <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 space-y-1.5">
+            <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 space-y-2">
               <div class="font-bold">分類の切り口を選択してプレビュー</div>
               <div class="flex flex-wrap gap-1.5">
-                <button type="button" data-prop-mode="tech" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'tech' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">技術要素・手法で分ける</button>
-                <button type="button" data-prop-mode="target" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'target' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">計測対象・応用で分ける</button>
-                <button type="button" data-prop-mode="openalex" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'openalex' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">OpenAlexトピック・キーワード</button>
+                <button type="button" data-prop-mode="tech" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'tech' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">技術要素・手法</button>
+                <button type="button" data-prop-mode="target" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'target' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">計測対象・応用</button>
+                <button type="button" data-prop-mode="openalex" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'openalex' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">OpenAlexトピック</button>
+                <button type="button" data-prop-mode="custom" class="px-2.5 py-1 rounded-lg font-semibold border transition ${currentMode === 'custom' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400'}">自分の研究軸 / AI精密分類</button>
               </div>
-              ${!hasOaTopics ? `
+
+              ${currentMode === 'custom' ? `
+                <div class="pt-1.5 space-y-1.5 border-t border-emerald-200/80">
+                  <label class="block text-[11px] font-semibold text-emerald-900">分けたい軸（カンマ区切り）を入力して自動振り分け:</label>
+                  <div class="flex gap-1.5">
+                    <input id="customAxesInput" type="text" value="${escapeHtml(customAxesText)}" class="flex-1 px-2.5 py-1 text-[11px] bg-white border border-emerald-300 rounded-lg" />
+                    <button type="button" id="btnRunCustomAxes" class="px-2.5 py-1 text-[11px] font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg shrink-0">振り分け</button>
+                  </div>
+                  <div class="flex items-center justify-between pt-0.5">
+                    <span class="text-[10px] text-emerald-800">Gemini APIキー設定済みの場合は論文内容から自動命名も可能</span>
+                    <button type="button" id="btnAiAutoCluster" class="px-2.5 py-1 text-[11px] font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-lg shrink-0">✨ AIで細かく自動分類</button>
+                  </div>
+                </div>` : ''}
+
+              ${!hasOaTopics && currentMode !== 'custom' ? `
                 <div class="flex items-center justify-between pt-1 text-[11px] text-emerald-800">
                   <span>OpenAlexの公式トピックを取得すると精度が上がります</span>
                   <button type="button" id="btnFetchTopicsInModal" class="px-2 py-0.5 bg-white border border-emerald-300 rounded font-semibold hover:bg-emerald-100">トピック取得</button>
                 </div>` : ''}
             </div>
 
-            <div class="space-y-2.5 max-h-[48vh] overflow-y-auto pr-1">
+            <div class="space-y-2.5 max-h-[45vh] overflow-y-auto pr-1">
               ${proposal.themes.map((t, tIdx) => {
                 const papersInLane = state.papers.filter(p => proposal.assignments[p.id] === t.id);
                 return `
@@ -2545,9 +2578,12 @@
               }).join('')}
             </div>
 
-            <div class="flex justify-end gap-2 pt-2 border-t border-slate-200">
-              <button type="button" id="btnCancelAutoProp" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
-              <button type="button" id="btnApplyAutoProp" class="px-4 py-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">この分類案を適用する</button>
+            <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-200">
+              <button type="button" id="btnAddPropLane" class="px-3 py-1.5 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg">+ レーンを追加</button>
+              <div class="flex gap-2">
+                <button type="button" id="btnCancelAutoProp" class="px-4 py-1.5 font-medium bg-slate-100 hover:bg-slate-200 rounded-lg">キャンセル</button>
+                <button type="button" id="btnApplyAutoProp" class="px-4 py-1.5 font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">この分類案を適用する</button>
+              </div>
             </div>
           </div>
         `;
@@ -2559,9 +2595,76 @@
         document.querySelectorAll('[data-prop-mode]').forEach(btn => {
           btn.addEventListener('click', () => {
             currentMode = btn.getAttribute('data-prop-mode');
-            proposal = buildClassificationProposal(currentMode);
+            if (currentMode === 'custom') {
+              proposal = classifyByCustomAxes(customAxesText);
+            } else {
+              proposal = buildClassificationProposal(currentMode);
+            }
             mount();
           });
+        });
+
+        document.getElementById('btnRunCustomAxes')?.addEventListener('click', () => {
+          customAxesText = document.getElementById('customAxesInput').value;
+          proposal = classifyByCustomAxes(customAxesText);
+          mount();
+        });
+
+        document.getElementById('btnAddPropLane')?.addEventListener('click', () => {
+          proposal.themes.push({
+            id: uid('theme'),
+            name: `詳細テーマ ${proposal.themes.length + 1}`,
+            color: palette[proposal.themes.length % palette.length]
+          });
+          mount();
+        });
+
+        document.getElementById('btnAiAutoCluster')?.addEventListener('click', async () => {
+          const apiKey = getGeminiApiKey();
+          if (!apiKey) {
+            showToast('先に詳細パネルの「⚙」からGemini APIキーを設定してください');
+            return;
+          }
+          const btn = document.getElementById('btnAiAutoCluster');
+          if (btn) btn.textContent = 'AI分析中...';
+          try {
+            const papersBrief = state.papers.map(p => ({
+              id: p.id,
+              title: p.title,
+              year: p.year,
+              abstract: (p.summaryEn || p.summary || '').slice(0, 300)
+            }));
+            const prompt = `Group these academic papers into 5 to 8 fine-grained, research-specific Japanese theme lanes for a citation timeline map. Return strictly valid JSON: {"themes":[{"name":"Japanese lane name","paperIds":["id1",...]}]}. Every paper id must appear in exactly one theme.\nPapers: ${JSON.stringify(papersBrief)}`;
+            const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { responseMimeType: 'application/json' }
+              })
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
+            if (Array.isArray(parsed.themes) && parsed.themes.length > 0) {
+              const newThemes = [];
+              const newAssign = {};
+              parsed.themes.forEach((gt, i) => {
+                const tid = uid('theme');
+                newThemes.push({ id: tid, name: gt.name || `テーマ${i + 1}`, color: palette[i % palette.length] });
+                (gt.paperIds || []).forEach(pid => { newAssign[pid] = tid; });
+              });
+              state.papers.forEach(p => {
+                if (!newAssign[p.id]) newAssign[p.id] = newThemes[0].id;
+              });
+              proposal = { themes: newThemes, assignments: newAssign };
+              mount();
+              showToast('AIが研究内容に即した細かい横軸を提案しました');
+            }
+          } catch (err) {
+            if (btn) btn.textContent = '✨ AIで細かく自動分類';
+            showToast(`AI分類に失敗しました: ${err.message}`);
+          }
         });
 
         document.getElementById('btnFetchTopicsInModal')?.addEventListener('click', async () => {
